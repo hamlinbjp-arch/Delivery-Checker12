@@ -829,9 +829,12 @@ function bindSettings(){
 async function parsePOSPdf(file){
   APP.processing=true;APP.processStep='Loading PDF...';render();
   try{
-    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    const arrayBuffer=await file.arrayBuffer();
-    const pdf=await pdfjsLib.getDocument({data:arrayBuffer}).promise;
+    // Disable worker to avoid cross-origin worker fetch issues on Android content:// URIs
+    pdfjsLib.GlobalWorkerOptions.workerSrc='';
+    let arrayBuffer;
+    try{arrayBuffer=await file.arrayBuffer()}catch(e){throw new Error('Reading file failed: '+e.message)}
+    let pdf;
+    try{pdf=await pdfjsLib.getDocument({data:arrayBuffer,disableWorker:true}).promise}catch(e){throw new Error('PDF load failed: '+e.message)}
     const totalPages=pdf.numPages;
     const BATCH=10;
     const totalBatches=Math.ceil(totalPages/BATCH);
@@ -860,7 +863,9 @@ async function parsePOSPdf(file){
       APP.processStep=`AI parsing ${batchNum}/${totalBatches}...`;render();
       const content=images.map(img=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:img}}));
       content.push({type:'text',text:`These are pages from an Idealpos POS stocklist. Extract EVERY item row. Each item row has columns: Code (numeric), Description (text), and other columns. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array.`});
-      const data=await callClaude(APP.apiKey,[{role:'user',content}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.',16000);
+      let data;
+      try{data=await callClaude(APP.apiKey,[{role:'user',content}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.',16000)}
+      catch(e){throw new Error(`API call failed (batch ${batchNum}): ${e.message}`)}
       const text=data.content.map(c=>c.text||'').join('');
       const clean=text.replace(/```json[\s\S]*?```|```/g,'').trim();
       let batchItems;
