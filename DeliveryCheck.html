@@ -845,50 +845,38 @@ async function parsePOSPdf(file){
     try{pdf=await pdfjsLib.getDocument({data:arrayBuffer,disableWorker:true}).promise}catch(e){throw new Error('PDF load failed: '+e.message)}
     const totalPages=pdf.numPages;
 
-    // Extract text from all pages (much smaller payload than images)
-    APP.processStep=`Extracting text (0/${totalPages})...`;render();
-    const pageTexts=[];
+    // Extract text and parse with regex — no API calls needed for structured stocklist data
+    APP.processStep=`Parsing stocklist...`;render();
+    const allItems=[];
+    const seen=new Set();
+    // Idealpos rows: numeric code (3-7 digits) followed by description text
+    // e.g. "1234  Product Name Here  12.50  18.99  33.9%"
+    const itemRow=/^\s*(\d{3,7})\s{1,6}([A-Za-z][^\t\n]{2,60}?)(?:\s{2,}|\t|$)/;
     for(let i=1;i<=totalPages;i++){
-      if(i%10===0){APP.processStep=`Extracting text (${i}/${totalPages})...`;render()}
+      if(i%20===0){APP.processStep=`Parsing page ${i}/${totalPages}...`;render()}
       const page=await pdf.getPage(i);
       const tc=await page.getTextContent();
-      // Join text items; insert newline when y-position changes significantly
-      let lastY=null;let line='';const lines=[];
+      // Group text items by y-position to reconstruct rows
+      const rows={};
       for(const item of tc.items){
-        if(lastY!==null&&Math.abs(item.transform[5]-lastY)>3){lines.push(line);line=''}
-        line+=(line?' ':'')+item.str;
-        lastY=item.transform[5];
+        if(!item.str.trim())continue;
+        const y=Math.round(item.transform[5]);
+        if(!rows[y])rows[y]={x:item.transform[4],text:''};
+        rows[y].text+=(rows[y].text?' ':'')+item.str;
       }
-      if(line)lines.push(line);
-      pageTexts.push(`--- Page ${i} ---\n${lines.join('\n')}`);
-    }
-
-    // Send in batches of 20 pages worth of text
-    const BATCH=20;
-    const totalBatches=Math.ceil(pageTexts.length/BATCH);
-    const allItems=[];
-    for(let b=0;b<pageTexts.length;b+=BATCH){
-      const batchNum=Math.floor(b/BATCH)+1;
-      const chunk=pageTexts.slice(b,b+BATCH).join('\n');
-      APP.processStep=`AI parsing ${batchNum}/${totalBatches}...`;render();
-      const prompt=`This is extracted text from pages of an Idealpos POS stocklist. Extract EVERY item row. Each item row has a numeric Code and a Description. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows with a numeric code. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array.\n\n${chunk}`;
-      let data;
-      try{data=await callClaude(APP.apiKey,[{role:'user',content:[{type:'text',text:prompt}]}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.',16000)}
-      catch(e){throw new Error(`API call failed (batch ${batchNum}): ${e.message}`)}
-      const respText=data.content.map(c=>c.text||'').join('');
-      const clean=respText.replace(/```json[\s\S]*?```|```/g,'').trim();
-      let batchItems;
-      try{batchItems=JSON.parse(clean)}catch{
-        const m=clean.match(/\[[\s\S]*\]/);
-        if(m){try{batchItems=JSON.parse(m[0])}catch{throw new Error(`Batch ${batchNum} parse error: ${clean.slice(0,120)}`)}}
-        else throw new Error(`Batch ${batchNum} no JSON found: ${clean.slice(0,120)}`)
+      // Process rows top-to-bottom (higher y = higher on page in PDF coords)
+      for(const y of Object.keys(rows).map(Number).sort((a,b)=>b-a)){
+        const line=rows[y].text.trim();
+        const m=line.match(itemRow);
+        if(m){
+          const code=m[1];
+          const desc=m[2].trim();
+          if(!seen.has(code)&&desc.length>1){seen.add(code);allItems.push({code,description:desc})}
+        }
       }
-      allItems.push(...batchItems);
     }
-
-    // Deduplicate by code, keeping first occurrence
-    const seen=new Set();
-    const items=allItems.filter(it=>{if(seen.has(it.code))return false;seen.add(it.code);return true});
+    if(allItems.length===0)throw new Error('No items found — PDF may be scanned/image-based. Try a text-based export from Idealpos.');
+    const items=allItems;
     APP.posData={items,updatedAt:new Date().toISOString()};
     store.set('pos-data',APP.posData);
     store.set('skip-pos',true);
