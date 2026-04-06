@@ -213,11 +213,11 @@ function downloadCSV(items,notes,supplier){
 }
 
 /* ── API ── */
-async function callClaude(apiKey,messages,systemPrompt){
+async function callClaude(apiKey,messages,systemPrompt,maxTokens=8000){
   const resp=await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
     headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8000,system:systemPrompt,messages})
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:maxTokens,system:systemPrompt,messages})
   });
   if(!resp.ok){const e=await resp.text();throw new Error(`API ${resp.status}: ${e}`)}
   return resp.json();
@@ -833,7 +833,7 @@ async function parsePOSPdf(file){
     const arrayBuffer=await file.arrayBuffer();
     const pdf=await pdfjsLib.getDocument({data:arrayBuffer}).promise;
     const totalPages=pdf.numPages;
-    const BATCH=20;
+    const BATCH=10;
     const totalBatches=Math.ceil(totalPages/BATCH);
     const allItems=[];
 
@@ -860,11 +860,15 @@ async function parsePOSPdf(file){
       APP.processStep=`AI parsing ${batchNum}/${totalBatches}...`;render();
       const content=images.map(img=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:img}}));
       content.push({type:'text',text:`These are pages from an Idealpos POS stocklist. Extract EVERY item row. Each item row has columns: Code (numeric), Description (text), and other columns. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array.`});
-      const data=await callClaude(APP.apiKey,[{role:'user',content}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.');
+      const data=await callClaude(APP.apiKey,[{role:'user',content}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.',16000);
       const text=data.content.map(c=>c.text||'').join('');
-      const clean=text.replace(/```json|```/g,'').trim();
+      const clean=text.replace(/```json[\s\S]*?```|```/g,'').trim();
       let batchItems;
-      try{batchItems=JSON.parse(clean)}catch{const m=clean.match(/\[[\s\S]*\]/);if(m)batchItems=JSON.parse(m[0]);else throw new Error('Could not parse batch '+batchNum)}
+      try{batchItems=JSON.parse(clean)}catch{
+        const m=clean.match(/\[[\s\S]*\]/);
+        if(m){try{batchItems=JSON.parse(m[0])}catch{throw new Error(`Batch ${batchNum} parse error. Response started: ${clean.slice(0,120)}`)}}
+        else throw new Error(`Batch ${batchNum} no JSON found. Response: ${clean.slice(0,120)}`)
+      }
       allItems.push(...batchItems);
     }
 
