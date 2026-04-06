@@ -833,28 +833,32 @@ async function parsePOSPdf(file){
     const arrayBuffer=await file.arrayBuffer();
     const pdf=await pdfjsLib.getDocument({data:arrayBuffer}).promise;
     const totalPages=pdf.numPages;
-
-    // Render every page to a JPEG image
-    const images=[];
-    for(let i=1;i<=totalPages;i++){
-      APP.processStep=`Rendering page ${i}/${totalPages}...`;render();
-      const page=await pdf.getPage(i);
-      const vp=page.getViewport({scale:1.5});
-      const canvas=document.createElement('canvas');
-      canvas.width=vp.width;canvas.height=vp.height;
-      await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
-      images.push(canvas.toDataURL('image/jpeg',0.75).split(',')[1]);
-    }
-
-    // Send in batches of 50 pages, merge results
-    const BATCH=50;
+    const BATCH=20;
+    const totalBatches=Math.ceil(totalPages/BATCH);
     const allItems=[];
-    const totalBatches=Math.ceil(images.length/BATCH);
-    for(let b=0;b<images.length;b+=BATCH){
-      const chunk=images.slice(b,b+BATCH);
+
+    // Render and send one batch at a time to keep memory usage low
+    for(let b=0;b<totalPages;b+=BATCH){
       const batchNum=Math.floor(b/BATCH)+1;
+      const end=Math.min(b+BATCH,totalPages);
+
+      // Render this batch's pages
+      const images=[];
+      for(let i=b+1;i<=end;i++){
+        APP.processStep=`Rendering page ${i}/${totalPages}...`;render();
+        const page=await pdf.getPage(i);
+        const vp=page.getViewport({scale:1.0});
+        const canvas=document.createElement('canvas');
+        canvas.width=vp.width;canvas.height=vp.height;
+        await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+        images.push(canvas.toDataURL('image/jpeg',0.6).split(',')[1]);
+        // Release canvas memory
+        canvas.width=0;canvas.height=0;
+      }
+
+      // Send batch to Claude
       APP.processStep=`AI parsing ${batchNum}/${totalBatches}...`;render();
-      const content=chunk.map(img=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:img}}));
+      const content=images.map(img=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:img}}));
       content.push({type:'text',text:`These are pages from an Idealpos POS stocklist. Extract EVERY item row. Each item row has columns: Code (numeric), Description (text), and other columns. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array.`});
       const data=await callClaude(APP.apiKey,[{role:'user',content}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.');
       const text=data.content.map(c=>c.text||'').join('');
