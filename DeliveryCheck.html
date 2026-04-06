@@ -387,7 +387,7 @@ function renderDeliveryForm(){
         ${icon('file',16)}<span style="font-size:13px;font-weight:600">Delivery Report / Invoice</span>
       </div>
       <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Photo or PDF of the supplier's delivery docket</p>
-      <input id="report-input" type="file" accept="image/*,.pdf" capture="environment" style="display:none">
+      <input id="report-input" type="file" accept="image/*,.pdf" multiple style="display:none">
       <div class="upload-zone">
         <button class="upload-add" id="report-add-btn">${icon('plus',14)} Add</button>
         ${reportChips}
