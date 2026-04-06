@@ -836,43 +836,44 @@ async function parsePOSPdf(file){
     let pdf;
     try{pdf=await pdfjsLib.getDocument({data:arrayBuffer,disableWorker:true}).promise}catch(e){throw new Error('PDF load failed: '+e.message)}
     const totalPages=pdf.numPages;
-    const BATCH=10;
-    const totalBatches=Math.ceil(totalPages/BATCH);
-    const allItems=[];
 
-    // Render and send one batch at a time to keep memory usage low
-    for(let b=0;b<totalPages;b+=BATCH){
-      const batchNum=Math.floor(b/BATCH)+1;
-      const end=Math.min(b+BATCH,totalPages);
-
-      // Render this batch's pages
-      const images=[];
-      for(let i=b+1;i<=end;i++){
-        APP.processStep=`Rendering page ${i}/${totalPages}...`;render();
-        const page=await pdf.getPage(i);
-        const vp=page.getViewport({scale:1.0});
-        const canvas=document.createElement('canvas');
-        canvas.width=vp.width;canvas.height=vp.height;
-        await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
-        images.push(canvas.toDataURL('image/jpeg',0.6).split(',')[1]);
-        // Release canvas memory
-        canvas.width=0;canvas.height=0;
+    // Extract text from all pages (much smaller payload than images)
+    APP.processStep=`Extracting text (0/${totalPages})...`;render();
+    const pageTexts=[];
+    for(let i=1;i<=totalPages;i++){
+      if(i%10===0){APP.processStep=`Extracting text (${i}/${totalPages})...`;render()}
+      const page=await pdf.getPage(i);
+      const tc=await page.getTextContent();
+      // Join text items; insert newline when y-position changes significantly
+      let lastY=null;let line='';const lines=[];
+      for(const item of tc.items){
+        if(lastY!==null&&Math.abs(item.transform[5]-lastY)>3){lines.push(line);line=''}
+        line+=(line?' ':'')+item.str;
+        lastY=item.transform[5];
       }
+      if(line)lines.push(line);
+      pageTexts.push(`--- Page ${i} ---\n${lines.join('\n')}`);
+    }
 
-      // Send batch to Claude
+    // Send in batches of 20 pages worth of text
+    const BATCH=20;
+    const totalBatches=Math.ceil(pageTexts.length/BATCH);
+    const allItems=[];
+    for(let b=0;b<pageTexts.length;b+=BATCH){
+      const batchNum=Math.floor(b/BATCH)+1;
+      const chunk=pageTexts.slice(b,b+BATCH).join('\n');
       APP.processStep=`AI parsing ${batchNum}/${totalBatches}...`;render();
-      const content=images.map(img=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:img}}));
-      content.push({type:'text',text:`These are pages from an Idealpos POS stocklist. Extract EVERY item row. Each item row has columns: Code (numeric), Description (text), and other columns. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array.`});
+      const prompt=`This is extracted text from pages of an Idealpos POS stocklist. Extract EVERY item row. Each item row has a numeric Code and a Description. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows with a numeric code. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array.\n\n${chunk}`;
       let data;
-      try{data=await callClaude(APP.apiKey,[{role:'user',content}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.',16000)}
+      try{data=await callClaude(APP.apiKey,[{role:'user',content:[{type:'text',text:prompt}]}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.',16000)}
       catch(e){throw new Error(`API call failed (batch ${batchNum}): ${e.message}`)}
-      const text=data.content.map(c=>c.text||'').join('');
-      const clean=text.replace(/```json[\s\S]*?```|```/g,'').trim();
+      const respText=data.content.map(c=>c.text||'').join('');
+      const clean=respText.replace(/```json[\s\S]*?```|```/g,'').trim();
       let batchItems;
       try{batchItems=JSON.parse(clean)}catch{
         const m=clean.match(/\[[\s\S]*\]/);
-        if(m){try{batchItems=JSON.parse(m[0])}catch{throw new Error(`Batch ${batchNum} parse error. Response started: ${clean.slice(0,120)}`)}}
-        else throw new Error(`Batch ${batchNum} no JSON found. Response: ${clean.slice(0,120)}`)
+        if(m){try{batchItems=JSON.parse(m[0])}catch{throw new Error(`Batch ${batchNum} parse error: ${clean.slice(0,120)}`)}}
+        else throw new Error(`Batch ${batchNum} no JSON found: ${clean.slice(0,120)}`)
       }
       allItems.push(...batchItems);
     }
