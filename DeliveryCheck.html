@@ -8,6 +8,7 @@
 <meta name="theme-color" content="#0f1419">
 <title>DeliveryCheck</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -826,19 +827,46 @@ function bindSettings(){
 
 /* Parse POS PDF */
 async function parsePOSPdf(file){
-  APP.processing=true;APP.processStep='Converting PDF...';render();
+  APP.processing=true;APP.processStep='Loading PDF...';render();
   try{
-    const base64=await fileToBase64(file);
-    APP.processStep='AI parsing POS data...';render();
-    const data=await callClaude(APP.apiKey,[{role:'user',content:[
-      {type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}},
-      {type:'text',text:`This is a POS stocklist PDF exported from Idealpos. Extract EVERY item row from ALL pages. Each item row has columns: Code (numeric), Description (text), Average Cost, Selling Price(s), Margin %. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows. Extract ONLY the Code and Description fields — ignore cost, price, and margin columns. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array. Process ALL pages thoroughly.`}
-    ]}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.');
-    APP.processStep='Processing...';render();
-    const text=data.content.map(c=>c.text||'').join('');
-    const clean=text.replace(/```json|```/g,'').trim();
-    let items;
-    try{items=JSON.parse(clean)}catch{const m=clean.match(/\[[\s\S]*\]/);if(m)items=JSON.parse(m[0]);else throw new Error('Could not parse POS data')}
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const arrayBuffer=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:arrayBuffer}).promise;
+    const totalPages=pdf.numPages;
+
+    // Render every page to a JPEG image
+    const images=[];
+    for(let i=1;i<=totalPages;i++){
+      APP.processStep=`Rendering page ${i}/${totalPages}...`;render();
+      const page=await pdf.getPage(i);
+      const vp=page.getViewport({scale:1.5});
+      const canvas=document.createElement('canvas');
+      canvas.width=vp.width;canvas.height=vp.height;
+      await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+      images.push(canvas.toDataURL('image/jpeg',0.75).split(',')[1]);
+    }
+
+    // Send in batches of 50 pages, merge results
+    const BATCH=50;
+    const allItems=[];
+    const totalBatches=Math.ceil(images.length/BATCH);
+    for(let b=0;b<images.length;b+=BATCH){
+      const chunk=images.slice(b,b+BATCH);
+      const batchNum=Math.floor(b/BATCH)+1;
+      APP.processStep=`AI parsing ${batchNum}/${totalBatches}...`;render();
+      const content=chunk.map(img=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:img}}));
+      content.push({type:'text',text:`These are pages from an Idealpos POS stocklist. Extract EVERY item row. Each item row has columns: Code (numeric), Description (text), and other columns. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array.`});
+      const data=await callClaude(APP.apiKey,[{role:'user',content}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.');
+      const text=data.content.map(c=>c.text||'').join('');
+      const clean=text.replace(/```json|```/g,'').trim();
+      let batchItems;
+      try{batchItems=JSON.parse(clean)}catch{const m=clean.match(/\[[\s\S]*\]/);if(m)batchItems=JSON.parse(m[0]);else throw new Error('Could not parse batch '+batchNum)}
+      allItems.push(...batchItems);
+    }
+
+    // Deduplicate by code, keeping first occurrence
+    const seen=new Set();
+    const items=allItems.filter(it=>{if(seen.has(it.code))return false;seen.add(it.code);return true});
     APP.posData={items,updatedAt:new Date().toISOString()};
     store.set('pos-data',APP.posData);
     store.set('skip-pos',true);
