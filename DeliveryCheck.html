@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1419">
+<title>DeliveryCheck</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1419;--bg2:#1a1f2e;--border:#2f3336;
+  --text:#e7e9ea;--text2:#8b949e;--text3:#71767b;
+  --green:#52b788;--green-dark:#2d6a4f;
+  --amber:#e5a100;--red:#f44336;
+  --font-mono:'JetBrains Mono',monospace;
+  --font-sys:-apple-system,'Segoe UI',sans-serif;
+}
+html,body{background:var(--bg);color:var(--text);font-family:var(--font-sys);
+  min-height:100vh;-webkit-tap-highlight-color:transparent;overflow-x:hidden}
+input,textarea,select,button{font-family:inherit;color:inherit}
+.input{width:100%;padding:12px 14px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-size:14px;outline:none}
+.input:focus{border-color:var(--green-dark)}
+.btn{padding:10px 16px;border:none;border-radius:8px;font-size:13px;font-weight:600;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn-primary{background:var(--green-dark);color:#fff}
+.btn-primary:disabled{background:var(--bg2);color:var(--text3);cursor:default}
+.btn-ghost{background:var(--bg2);border:1px solid var(--border);color:var(--text2)}
+.btn-danger{background:#f4433622;border:1px solid #f4433644;color:var(--red)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px}
+.card-label{font-size:13px;font-weight:600;margin-bottom:8px}
+.badge{font-size:10px;padding:1px 6px;border-radius:4px;font-weight:700;display:inline-block}
+.badge-new{background:#e5a10033;color:var(--amber)}
+.badge-dmg{background:#f4433633;color:var(--red)}
+.hidden{display:none!important}
+#app{padding-bottom:72px}
+/* header */
+.header{background:linear-gradient(135deg,var(--bg2),var(--bg));border-bottom:2px solid var(--green-dark);
+  padding:14px 16px;display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:50}
+.header-logo{display:flex;align-items:center;gap:10px}
+.header-icon{width:32px;height:32px;border-radius:8px;background:var(--green-dark);
+  display:flex;align-items:center;justify-content:center}
+.header-title{font-family:var(--font-mono);font-weight:800;font-size:16px;letter-spacing:1.5px;color:var(--green)}
+.header-meta{font-size:11px;color:var(--text3);text-align:right}
+/* bottom nav */
+.nav{position:fixed;bottom:0;left:0;right:0;height:64px;background:var(--bg2);
+  border-top:1px solid var(--border);display:flex;z-index:50}
+.nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:none;border:none;color:var(--text3);gap:4px;cursor:pointer;padding:0}
+.nav-btn.active{color:var(--green)}
+.nav-btn span{font-size:11px}
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.stat{background:var(--bg2);border-radius:8px;padding:8px 6px;text-align:center}
+.stat-val{font-size:20px;font-weight:800;font-family:var(--font-mono)}
+.stat-label{font-size:10px;color:var(--text3);margin-top:2px}
+/* result row */
+.result-row{border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:8px;background:var(--bg2)}
+.result-row.new-item{background:#e5a10008;border-color:#e5a10066}
+.result-row.damaged{background:#f4433608;border-color:#f4433666}
+.result-row.matched{border-color:#52b78844}
+.row-header{padding:12px 14px;cursor:pointer;display:flex;align-items:flex-start;gap:10px}
+.row-details{padding:0 14px 12px;border-top:1px solid #2f333644}
+/* pos entry mode */
+.pos-mode{min-height:100vh;background:#0a0d11;color:var(--text);font-family:var(--font-mono)}
+.pos-header{background:var(--bg2);padding:12px 16px;display:flex;justify-content:space-between;
+  align-items:center;border-bottom:2px solid var(--green);position:sticky;top:0;z-index:10}
+.pos-row{padding:14px 12px;border-bottom:1px solid var(--border);display:grid;
+  grid-template-columns:80px 1fr 50px;gap:10px;align-items:center;cursor:pointer;transition:all .15s}
+.pos-row.checked{opacity:.35;text-decoration:line-through;background:#52b78808}
+.pos-code{font-size:18px;font-weight:800;color:var(--green)}
+.pos-name{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pos-qty{font-size:20px;font-weight:800;text-align:right}
+/* upload zone */
+.upload-zone{display:flex;gap:8px;flex-wrap:wrap}
+.upload-add{padding:10px 16px;background:var(--bg);border:1px dashed var(--border);
+  border-radius:8px;color:var(--text2);font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.upload-file{padding:6px 10px;background:#2d6a4f22;border:1px solid #2d6a4f44;
+  border-radius:8px;font-size:11px;display:flex;align-items:center;gap:6px;max-width:160px}
+.upload-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upload-file button{background:none;border:none;color:var(--text3);cursor:pointer;padding:0;flex-shrink:0}
+/* barcode chip */
+.bc-chip{padding:4px 10px;background:#2d6a4f22;border:1px solid var(--green-dark);
+  border-radius:6px;font-size:12px;font-family:var(--font-mono);display:inline-flex;align-items:center;gap:6px}
+.bc-chip button{background:none;border:none;color:var(--text3);cursor:pointer;padding:0}
+/* setup */
+.setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.setup-icon{width:56px;height:56px;border-radius:16px;background:var(--green-dark);
+  display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+/* action bar */
+.action-bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.action-bar .btn{flex:1;min-width:0;font-size:12px}
+/* spinner */
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.spinner{display:inline-block;animation:spin 1s linear infinite}
+/* history item */
+.hist-item{cursor:pointer}
+.hist-item:active{background:#ffffff08}
+/* scrollbar */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════ */
+/*  DELIVERYCHECK — Single HTML File, Vanilla JS                  */
+/* ═══════════════════════════════════════════════════════════════ */
+
+/* ── SVG Icons ── */
+const ICONS = {
+  check:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  plus:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+  upload:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
+  camera:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>`,
+  x:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+  search:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+  clock:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+  trash:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>`,
+  settings:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`,
+  truck:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`,
+  download:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+  barcode:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="2" height="16"/><rect x="6" y="4" width="1" height="16"/><rect x="9" y="4" width="3" height="16"/><rect x="14" y="4" width="1" height="16"/><rect x="17" y="4" width="2" height="16"/><rect x="21" y="4" width="1" height="16"/></svg>`,
+  eye:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  file:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+  users:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>`,
+  flag:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`,
+  filter:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>`,
+  zap:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+  chevDown:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+  chevRight:`<svg width="W" height="H" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`,
+};
+function icon(name,size=20){return(ICONS[name]||'').replace(/W/g,size).replace(/H/g,size)}
+
+/* ── Helpers ── */
+const uid=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+const fmt=d=>new Date(d).toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+const pct=v=>`${Math.round(v)}%`;
+const esc=v=>`"${String(v).replace(/"/g,'""')}"`;
+const $=s=>document.querySelector(s);
+const $$=s=>document.querySelectorAll(s);
+
+/* ── Storage (localStorage) ── */
+const store={
+  get(k){try{const v=localStorage.getItem('dc-'+k);return v?JSON.parse(v):null}catch{return null}},
+  set(k,v){try{localStorage.setItem('dc-'+k,JSON.stringify(v));return true}catch{return false}},
+  del(k){try{localStorage.removeItem('dc-'+k);return true}catch{return false}}
+};
+
+/* ── Fuzzy matching ── */
+function normalize(s){return(s||'').toLowerCase().replace(/[^a-z0-9]/g,' ').replace(/\s+/g,' ').trim()}
+function tokenize(s){return normalize(s).split(' ').filter(Boolean)}
+function levenshtein(a,b){
+  const m=a.length,n=b.length;
+  const dp=Array.from({length:m+1},(_,i)=>{const r=new Array(n+1);r[0]=i;return r});
+  for(let j=0;j<=n;j++)dp[0][j]=j;
+  for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)
+    dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]:1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+  return dp[m][n];
+}
+function fuzzyScore(a,b){
+  const na=normalize(a),nb=normalize(b);
+  if(na===nb)return 100;
+  const ta=tokenize(a),tb=tokenize(b);
+  if(!ta.length||!tb.length)return 0;
+  let matched=0;const used=new Set();
+  for(const wa of ta){
+    let best=0,bestIdx=-1;
+    for(let i=0;i<tb.length;i++){
+      if(used.has(i))continue;const wb=tb[i];let s=0;
+      if(wa===wb)s=1;else if(wa.startsWith(wb)||wb.startsWith(wa))s=.85;
+      else if(wa.includes(wb)||wb.includes(wa))s=.7;
+      else{const d=levenshtein(wa,wb);const ml=Math.max(wa.length,wb.length);s=Math.max(0,1-d/ml)*.6}
+      if(s>best){best=s;bestIdx=i}
+    }
+    if(bestIdx>=0&&best>.3){matched+=best;used.add(bestIdx)}
+  }
+  return Math.round(matched/Math.max(ta.length,tb.length)*100);
+}
+function findBestPOSMatch(itemName,posList,mappings={}){
+  if(!posList||!posList.length)return{code:'',name:'',confidence:0};
+  const mc=mappings[normalize(itemName)];
+  if(mc){const e=posList.find(p=>p.code===mc);if(e)return{code:e.code,name:e.description,confidence:98,learned:true}}
+  let best={code:'',name:'',confidence:0};
+  for(const p of posList){const s=fuzzyScore(itemName,p.description);if(s>best.confidence)best={code:p.code,name:p.description,confidence:s}}
+  return best;
+}
+
+/* ── File helpers ── */
+function fileToBase64(file){
+  return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=()=>rej(new Error('Read failed'));r.readAsDataURL(file)})
+}
+
+/* ── CSV ── */
+function generateCSV(items,notes){
+  const h=['Delivery Item','Qty Expected','Physical Match','POS Code','POS Name','Match Confidence','Damage Flag','Damage Note','Status','New Item','Manual Notes','Delivery Notes'];
+  const rows=items.map(it=>[it.name,it.qtyExpected,it.physicalMatch?'Yes':'No',it.posCode,it.posName,pct(it.confidence),it.damaged?'Yes':'No',it.damageNote||'',it.status,it.status==='NEW ITEM'?'Yes':'No',it.manualNotes||'',notes||'']);
+  return[h.map(esc).join(','),...rows.map(r=>r.map(esc).join(','))].join('\n');
+}
+function downloadCSV(items,notes,supplier){
+  const csv=generateCSV(items,notes);
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=`delivery_${supplier||'export'}_${new Date().toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(url);
+}
+
+/* ── API ── */
+async function callClaude(apiKey,messages,systemPrompt){
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8000,system:systemPrompt,messages})
+  });
+  if(!resp.ok){const e=await resp.text();throw new Error(`API ${resp.status}: ${e}`)}
+  return resp.json();
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  APP STATE                                          */
+/* ═══════════════════════════════════════════════════ */
+const APP={
+  page:'delivery',
+  apiKey:store.get('api-key')||'',
+  posData:store.get('pos-data'),
+  suppliers:store.get('suppliers')||[],
+  history:store.get('history')||[],
+  // session
+  selectedSupplier:'',
+  deliveryNotes:'',
+  reportFiles:[],
+  itemPhotos:[],
+  scannedBarcodes:[],
+  results:null,
+  viewingHistory:null,
+  processing:false,
+  processStep:'',
+  issuesOnly:false,
+  showPOSEntry:false,
+  posChecked:new Set(),
+  // ui
+  expandedRows:new Set(),
+};
+
+function setupDone(){return APP.apiKey&&APP.posData}
+
+/* ═══════════════════════════════════════════════════ */
+/*  RENDER ENGINE                                      */
+/* ═══════════════════════════════════════════════════ */
+function render(){
+  const app=$('#app');
+  // Setup needed?
+  if(!APP.apiKey||(!APP.posData&&!store.get('skip-pos'))){
+    app.innerHTML=renderSetup();
+    bindSetup();return;
+  }
+  // POS Entry mode
+  if(APP.showPOSEntry){
+    app.innerHTML=renderPOSEntry();
+    bindPOSEntry();return;
+  }
+  // Main app
+  let html=renderHeader();
+  html+=`<div style="padding:0 12px 12px">`;
+  if(APP.page==='delivery'){
+    if(APP.results||APP.viewingHistory){
+      html+=renderResults();
+    }else{
+      html+=renderDeliveryForm();
+    }
+  }else if(APP.page==='history'){
+    html+=renderHistory();
+  }else if(APP.page==='suppliers'){
+    html+=renderSuppliers();
+  }else if(APP.page==='settings'){
+    html+=renderSettings();
+  }
+  html+=`</div>`;
+  html+=renderNav();
+  app.innerHTML=html;
+  bindPage();
+}
+
+/* ── Header ── */
+function renderHeader(){
+  const posCount=APP.posData?APP.posData.items.length:0;
+  return`<div class="header">
+    <div class="header-logo">
+      <div class="header-icon">${icon('check',18)}</div>
+      <span class="header-title">DELIVERYCHECK</span>
+    </div>
+    ${posCount?`<div class="header-meta">${posCount} POS items</div>`:''}
+  </div>`;
+}
+
+/* ── Nav ── */
+function renderNav(){
+  const tabs=[{id:'delivery',icon:'truck',label:'Delivery'},{id:'history',icon:'clock',label:'History'},{id:'suppliers',icon:'users',label:'Suppliers'},{id:'settings',icon:'settings',label:'Settings'}];
+  return`<div class="nav">${tabs.map(t=>`<button class="nav-btn ${APP.page===t.id?'active':''}" data-nav="${t.id}">${icon(t.icon,22)}<span style="font-weight:${APP.page===t.id?700:400}">${t.label}</span></button>`).join('')}</div>`;
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  SETUP                                              */
+/* ═══════════════════════════════════════════════════ */
+function renderSetup(){
+  const hasKey=!!APP.apiKey;
+  return`<div class="setup">
+    <div class="setup-icon">${icon('check',28)}</div>
+    <h1 style="font-family:var(--font-mono);font-size:24px;font-weight:800;letter-spacing:2px;color:var(--green)">DELIVERYCHECK</h1>
+    <p style="color:var(--text3);margin:8px 0 32px;text-align:center">Stock delivery reconciliation powered by AI</p>
+    ${!hasKey?`
+      <div style="width:100%;max-width:400px">
+        <label style="font-size:13px;color:var(--text2);display:block;margin-bottom:6px">Step 1: Anthropic API Key</label>
+        <input id="setup-key" type="password" class="input" placeholder="sk-ant-..." value="${APP.apiKey}">
+        <button id="setup-key-btn" class="btn btn-primary" style="width:100%;margin-top:12px;padding:14px">Save &amp; Continue</button>
+      </div>
+    `:`
+      <div style="width:100%;max-width:400px">
+        <label style="font-size:13px;color:var(--text2);display:block;margin-bottom:6px">Step 2: Upload POS Stocklist PDF</label>
+        <p style="font-size:12px;color:var(--text3);margin:0 0 12px">Exported from Idealpos. Parsed and stored for future sessions.</p>
+        <input id="setup-pdf" type="file" accept=".pdf" style="display:none">
+        <button id="setup-pdf-btn" class="btn btn-ghost" style="width:100%;padding:16px;border-style:dashed" ${APP.processing?'disabled':''}>
+          ${APP.processing?APP.processStep:`${icon('upload',18)} Upload POS PDF`}
+        </button>
+        <button id="setup-skip-btn" class="btn" style="width:100%;margin-top:12px;padding:12px;background:none;border:1px solid var(--border);color:var(--text3)">Skip for now</button>
+      </div>
+    `}
+  </div>`;
+}
+function bindSetup(){
+  const keyBtn=$('#setup-key-btn');
+  if(keyBtn){
+    keyBtn.onclick=()=>{const v=$('#setup-key').value.trim();if(v){APP.apiKey=v;store.set('api-key',v);render()}}
+  }
+  const pdfBtn=$('#setup-pdf-btn');
+  if(pdfBtn){
+    pdfBtn.onclick=()=>$('#setup-pdf').click();
+    $('#setup-pdf').onchange=e=>{if(e.target.files[0])parsePOSPdf(e.target.files[0])}
+  }
+  const skipBtn=$('#setup-skip-btn');
+  if(skipBtn){skipBtn.onclick=()=>{store.set('skip-pos',true);render()}}
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  DELIVERY FORM                                      */
+/* ═══════════════════════════════════════════════════ */
+function renderDeliveryForm(){
+  const supOptions=APP.suppliers.length?
+    `<select id="sup-select" class="input" style="appearance:auto"><option value="">Select supplier...</option>${APP.suppliers.map(s=>`<option value="${s.name}" ${APP.selectedSupplier===s.name?'selected':''}>${s.name}</option>`).join('')}</select>`:
+    `<input id="sup-input" class="input" placeholder="Enter supplier name" value="${APP.selectedSupplier}">`;
+
+  const reportChips=APP.reportFiles.map((f,i)=>`<div class="upload-file"><span>${f.name}</span><button data-rm-report="${i}">${icon('x',12)}</button></div>`).join('');
+  const photoChips=APP.itemPhotos.map((f,i)=>`<div class="upload-file"><span>${f.name}</span><button data-rm-photo="${i}">${icon('x',12)}</button></div>`).join('');
+  const bcChips=APP.scannedBarcodes.map((bc,i)=>`<div class="bc-chip">${bc}<button data-rm-bc="${i}">${icon('x',12)}</button></div>`).join('');
+
+  return`<div style="padding-top:16px">
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 16px;display:flex;align-items:center;gap:8px">${icon('truck',20)} New Delivery</h2>
+
+    <div style="margin-bottom:14px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Supplier</label>
+      ${supOptions}
+    </div>
+
+    <div style="margin-bottom:16px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Delivery Notes</label>
+      <textarea id="del-notes" class="input" rows="2" placeholder="e.g. Box 3 was wet, driver arrived late...">${APP.deliveryNotes}</textarea>
+    </div>
+
+    <!-- Report Upload -->
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        ${icon('file',16)}<span style="font-size:13px;font-weight:600">Delivery Report / Invoice</span>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Photo or PDF of the supplier's delivery docket</p>
+      <input id="report-input" type="file" accept="image/*,.pdf" capture="environment" style="display:none">
+      <div class="upload-zone">
+        <button class="upload-add" id="report-add-btn">${icon('plus',14)} Add</button>
+        ${reportChips}
+      </div>
+    </div>
+
+    <!-- Photo Upload -->
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        ${icon('camera',16)}<span style="font-size:13px;font-weight:600">Physical Items (Optional)</span>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Photos of actual items received</p>
+      <input id="photo-input" type="file" accept="image/*" capture="environment" multiple style="display:none">
+      <div class="upload-zone">
+        <button class="upload-add" id="photo-add-btn">${icon('plus',14)} Add</button>
+        ${photoChips}
+      </div>
+    </div>
+
+    <!-- Barcode Scanner -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${APP.scanning?'10px':'0'}">
+        <div style="display:flex;align-items:center;gap:8px">
+          ${icon('barcode',18)}<span style="font-size:14px;font-weight:600">Barcode Scanner</span>
+        </div>
+        <button id="scan-btn" class="btn" style="padding:6px 14px;font-size:12px;background:${APP.scanning?'var(--red)':'var(--green-dark)'};color:#fff">
+          ${APP.scanning?'Stop':'Scan'}
+        </button>
+      </div>
+      <div id="scanner-area"></div>
+      ${bcChips?`<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">${bcChips}</div>`:''}
+    </div>
+
+    <!-- Manual barcode -->
+    <div style="margin-bottom:16px;display:flex;gap:8px">
+      <input id="bc-manual" class="input" placeholder="Enter barcode manually" style="flex:1;font-family:var(--font-mono);font-size:13px;padding:10px 12px">
+      <button id="bc-add-btn" class="btn btn-primary" style="padding:10px 14px;font-size:12px">Add</button>
+    </div>
+
+    <!-- Process -->
+    <button id="process-btn" class="btn ${!APP.processing&&APP.reportFiles.length&&APP.apiKey?'btn-primary':''}" 
+      style="width:100%;padding:16px;font-size:16px;font-weight:700;border:2px solid ${APP.reportFiles.length?'var(--green-dark)':'var(--border)'}" 
+      ${APP.processing||!APP.reportFiles.length||!APP.apiKey?'disabled':''}>
+      ${APP.processing?`<span class="spinner">⟳</span> ${APP.processStep}`:`${icon('zap',20)} Check Delivery`}
+    </button>
+    ${!APP.apiKey?'<p style="font-size:12px;color:var(--amber);margin-top:8px;text-align:center">Set your API key in Settings first</p>':''}
+  </div>`;
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  RESULTS VIEW                                       */
+/* ═══════════════════════════════════════════════════ */
+function renderResults(){
+  const allItems=APP.results||APP.viewingHistory?.items||[];
+  const items=APP.issuesOnly?allItems.filter(i=>i.status!=='Matched'):allItems;
+  const matched=allItems.filter(i=>i.status==='Matched').length;
+  const newC=allItems.filter(i=>i.status==='NEW ITEM').length;
+  const dmg=allItems.filter(i=>i.damaged).length;
+  const issues=allItems.filter(i=>i.status!=='Matched').length;
+  const supplier=APP.selectedSupplier||APP.viewingHistory?.supplier||'';
+  const notes=APP.deliveryNotes||APP.viewingHistory?.notes||'';
+  const isHist=!!APP.viewingHistory;
+
+  let html=`<div style="padding-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div>
+        <h2 style="font-size:18px;font-weight:700;margin:0">${isHist?'📋':'✅'} Results</h2>
+        ${supplier?`<p style="font-size:12px;color:var(--text3);margin:2px 0 0">${supplier}</p>`:''}
+      </div>
+      <button class="btn btn-ghost" id="results-back-btn" style="padding:6px 12px;font-size:12px">${isHist?'← Back':'New'}</button>
+    </div>`;
+
+  if(notes)html+=`<div class="card" style="padding:8px 12px;font-size:12px;color:var(--text2)">📝 ${notes}</div>`;
+
+  html+=`<div class="stats">
+    <div class="stat"><div class="stat-val" style="color:var(--text2)">${allItems.length}</div><div class="stat-label">Total</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--green)">${matched}</div><div class="stat-label">Matched</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--amber)">${newC}</div><div class="stat-label">New</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--red)">${dmg}</div><div class="stat-label">Damaged</div></div>
+  </div>`;
+
+  html+=`<div class="action-bar">
+    <button class="btn ${APP.issuesOnly?'':'btn-ghost'}" id="toggle-issues" style="${APP.issuesOnly?'background:#e5a10022;border:1px solid var(--amber);color:var(--amber)':''}">
+      ${icon('filter',14)} ${APP.issuesOnly?'All Items':`Issues (${issues})`}
+    </button>
+    <button class="btn btn-ghost" id="pos-entry-btn" style="color:var(--green)">${icon('zap',14)} POS Entry</button>
+    <button class="btn btn-ghost" id="export-btn">${icon('download',14)} CSV</button>
+  </div>`;
+
+  // Item rows
+  html+=`<div id="results-list">`;
+  for(const item of items){
+    const isNew=item.status==='NEW ITEM';
+    const isDmg=item.damaged||item.status==='Damaged';
+    const cls=isNew?'new-item':isDmg?'damaged':item.status==='Matched'?'matched':'';
+    const confColor=item.confidence>=80?'var(--green)':item.confidence>=60?'var(--amber)':'var(--red)';
+    const expanded=APP.expandedRows.has(item.id);
+
+    html+=`<div class="result-row ${cls}">
+      <div class="row-header" data-toggle-row="${item.id}">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            ${isNew?'<span class="badge badge-new">NEW</span>':''}
+            ${isDmg?'<span class="badge badge-dmg">DMG</span>':''}
+            <span style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+          </div>
+          <div style="display:flex;gap:12px;font-size:11px;color:var(--text3)">
+            <span>Qty: <b style="color:var(--text)">${item.qtyExpected}</b></span>
+            ${item.posCode?`<span style="font-family:var(--font-mono)">POS: <b style="color:var(--green)">${item.posCode}</b></span>`:''}
+            <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span>
+          </div>
+        </div>
+        ${expanded?icon('chevDown',16):icon('chevRight',16)}
+      </div>`;
+
+    if(expanded){
+      const statusColor=item.status==='Matched'?'var(--green)':item.status==='NEW ITEM'?'var(--amber)':item.status==='Damaged'?'var(--red)':'var(--text2)';
+      html+=`<div class="row-details"><div style="padding-top:10px;display:grid;gap:8px;font-size:12px">
+        <div><span style="color:var(--text3)">POS Match:</span> <span style="color:var(--text2)">${item.posName||'—'}</span></div>
+        <div><span style="color:var(--text3)">POS Code:</span> <span style="font-family:var(--font-mono);color:var(--green)">${item.posCode||'—'}</span></div>
+        <div><span style="color:var(--text3)">Confidence:</span> <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span></div>
+        <div><span style="color:var(--text3)">Physical:</span> <span>${item.physicalMatch?'✓ Seen':'Not verified'}</span></div>
+        <div><span style="color:var(--text3)">Status:</span> <span style="color:${statusColor};font-weight:600">${item.status}</span></div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button class="btn ${isDmg?'btn-danger':'btn-ghost'}" data-toggle-dmg="${item.id}" style="flex:1;font-size:12px">
+            ${icon('flag',14)} ${isDmg?'Remove Flag':'Flag Damage'}
+          </button>
+          ${item.confidence>=50&&item.confidence<95&&!item.learned?`<button class="btn" data-confirm-match="${item.id}" style="background:#2d6a4f22;border:1px solid var(--green-dark);color:var(--green);font-size:12px">${icon('check',14)} Confirm</button>`:''}
+        </div>
+        ${isDmg?`<input class="input" data-dmg-note="${item.id}" placeholder="Damage description..." value="${item.damageNote||''}" style="font-size:12px;padding:8px 10px;border-color:#f4433644">`:''}
+        ${isNew?`<input class="input" data-manual-note="${item.id}" placeholder="Manual POS code or notes..." value="${item.manualNotes||''}" style="font-size:12px;padding:8px 10px;font-family:var(--font-mono);border-color:#e5a10044">`:''}
+      </div></div>`;
+    }
+    html+=`</div>`;
+  }
+  if(!items.length){
+    html+=`<div style="text-align:center;padding:32px;color:var(--text3)">${APP.issuesOnly?'No issues found — all items matched!':'No items to display.'}</div>`;
+  }
+  html+=`</div></div>`;
+  return html;
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  POS ENTRY MODE                                     */
+/* ═══════════════════════════════════════════════════ */
+function renderPOSEntry(){
+  const items=(APP.results||APP.viewingHistory?.items||[]).filter(i=>i.posCode).sort((a,b)=>a.posCode.localeCompare(b.posCode));
+  let html=`<div class="pos-mode">
+    <div class="pos-header">
+      <span style="font-weight:800;font-size:16px;color:var(--green)">POS ENTRY MODE</span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:12px;color:var(--text3)">${APP.posChecked.size}/${items.length}</span>
+        <button id="pos-done-btn" class="btn" style="padding:6px 12px;background:var(--border);font-size:12px">Done</button>
+      </div>
+    </div>
+    <div style="padding:8px 12px">`;
+  for(const item of items){
+    const done=APP.posChecked.has(item.id);
+    html+=`<div class="pos-row ${done?'checked':''}" data-pos-toggle="${item.id}">
+      <span class="pos-code">${item.posCode}</span>
+      <span class="pos-name">${item.name}</span>
+      <span class="pos-qty">${item.qtyExpected}</span>
+    </div>`;
+  }
+  if(!items.length)html+=`<div style="text-align:center;padding:40px;color:var(--text3)">No POS-matched items.</div>`;
+  html+=`</div></div>`;
+  return html;
+}
+function bindPOSEntry(){
+  $('#pos-done-btn').onclick=()=>{APP.showPOSEntry=false;APP.posChecked.clear();render()};
+  document.querySelectorAll('[data-pos-toggle]').forEach(el=>{
+    el.onclick=()=>{const id=el.dataset.posToggle;APP.posChecked.has(id)?APP.posChecked.delete(id):APP.posChecked.add(id);render()}
+  });
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  HISTORY                                            */
+/* ═══════════════════════════════════════════════════ */
+function renderHistory(){
+  let html=`<div style="padding-top:16px">
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 12px;display:flex;align-items:center;gap:8px">${icon('clock',20)} Delivery History</h2>
+    <input id="hist-search" class="input" placeholder="Search by supplier or date..." style="margin-bottom:12px;font-size:13px" value="">
+    <div id="hist-list">`;
+  const list=APP.history;
+  if(!list.length){
+    html+=`<div style="text-align:center;padding:40px;color:var(--text3)">No deliveries recorded yet.</div>`;
+  }else{
+    for(const h of list){
+      html+=`<div class="card hist-item" data-view-hist="${h.id}" style="cursor:pointer">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:600">${h.supplier||'Unknown Supplier'}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">${fmt(h.date)}</div>
+            <div style="display:flex;gap:10px;margin-top:6px;font-size:11px">
+              <span style="color:var(--text2)">${h.itemCount||h.items?.length||0} items</span>
+              ${(h.issueCount||0)>0?`<span style="color:var(--amber)">${h.issueCount} issues</span>`:''}
+            </div>
+            ${h.notes?`<div style="font-size:11px;color:var(--text3);margin-top:4px;font-style:italic">📝 ${h.notes}</div>`:''}
+          </div>
+          <button class="btn" data-del-hist="${h.id}" style="background:none;border:none;color:var(--text3);padding:4px">${icon('trash',16)}</button>
+        </div>
+      </div>`;
+    }
+  }
+  html+=`</div></div>`;
+  return html;
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  SUPPLIERS                                          */
+/* ═══════════════════════════════════════════════════ */
+function renderSuppliers(){
+  let html=`<div style="padding-top:16px">
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 12px;display:flex;align-items:center;gap:8px">${icon('users',20)} Supplier Profiles</h2>
+    <p style="font-size:12px;color:var(--text3);margin:0 0 16px">Save supplier profiles to improve matching. Confirmed matches are learned automatically.</p>
+    <div class="card">
+      <div class="card-label">Add Supplier</div>
+      <input id="new-sup-name" class="input" placeholder="Supplier name" style="margin-bottom:8px">
+      <textarea id="new-sup-notes" class="input" rows="2" placeholder="Naming conventions, notes..." style="margin-bottom:8px;resize:vertical"></textarea>
+      <button id="add-sup-btn" class="btn btn-primary" style="font-size:12px">Add Supplier</button>
+    </div>`;
+  for(const s of APP.suppliers){
+    const mc=Object.keys(s.mappings||{}).length;
+    html+=`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-size:14px;font-weight:600">${s.name}</div>
+          ${s.notes?`<div style="font-size:11px;color:var(--text3);margin-top:4px">${s.notes}</div>`:''}
+          <div style="font-size:11px;color:var(--text2);margin-top:4px">${mc} learned mappings</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn" data-del-sup="${s.name}" style="background:none;border:none;color:var(--text3);padding:4px">${icon('trash',16)}</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  if(!APP.suppliers.length)html+=`<div style="text-align:center;padding:32px;color:var(--text3)">No suppliers yet.</div>`;
+  html+=`</div>`;
+  return html;
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  SETTINGS                                           */
+/* ═══════════════════════════════════════════════════ */
+function renderSettings(){
+  const pos=APP.posData;
+  let html=`<div style="padding-top:16px">
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 16px;display:flex;align-items:center;gap:8px">${icon('settings',20)} Settings</h2>
+    <div class="card">
+      <div class="card-label">Anthropic API Key</div>
+      <div style="display:flex;gap:8px">
+        <input id="set-key" type="password" class="input" placeholder="sk-ant-..." value="${APP.apiKey}" style="flex:1">
+        <button id="set-key-show" class="btn btn-ghost" style="padding:8px">${icon('eye',16)}</button>
+      </div>
+      <button id="set-key-save" class="btn btn-primary" style="margin-top:8px;font-size:12px">Save Key</button>
+    </div>
+    <div class="card">
+      <div class="card-label">POS Stocklist</div>
+      ${pos?`
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px"><span style="color:var(--green);font-weight:600">${pos.items.length}</span> items loaded</div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Last updated: ${fmt(pos.updatedAt)}</div>
+        <div style="display:flex;gap:8px">
+          <input id="set-pos-file" type="file" accept=".pdf" style="display:none">
+          <button id="set-pos-btn" class="btn btn-ghost" style="font-size:12px" ${APP.processing?'disabled':''}>${APP.processing?APP.processStep:'Re-upload PDF'}</button>
+          <button id="set-pos-clear" class="btn btn-danger" style="font-size:12px">Clear</button>
+        </div>
+      `:`
+        <p style="font-size:12px;color:var(--text3);margin:0 0 8px">No POS stocklist loaded.</p>
+        <input id="set-pos-file" type="file" accept=".pdf" style="display:none">
+        <button id="set-pos-btn" class="btn btn-primary" style="font-size:12px" ${APP.processing?'disabled':''}>${APP.processing?APP.processStep:'Upload POS PDF'}</button>
+      `}
+    </div>
+    <div class="card">
+      <div class="card-label">Data Management</div>
+      <button id="set-clear-hist" class="btn btn-danger" style="font-size:12px">Clear All History</button>
+    </div>
+  </div>`;
+  return html;
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  BIND PAGE EVENTS                                   */
+/* ═══════════════════════════════════════════════════ */
+function bindPage(){
+  // Nav
+  document.querySelectorAll('[data-nav]').forEach(el=>{
+    el.onclick=()=>{APP.page=el.dataset.nav;if(el.dataset.nav!=='delivery')APP.viewingHistory=null;render()}
+  });
+
+  if(APP.page==='delivery'){
+    if(APP.results||APP.viewingHistory){
+      bindResults();
+    }else{
+      bindDeliveryForm();
+    }
+  }else if(APP.page==='history'){
+    bindHistory();
+  }else if(APP.page==='suppliers'){
+    bindSuppliers();
+  }else if(APP.page==='settings'){
+    bindSettings();
+  }
+}
+
+function bindDeliveryForm(){
+  // Supplier
+  const sel=$('#sup-select');
+  if(sel)sel.onchange=()=>{APP.selectedSupplier=sel.value};
+  const inp=$('#sup-input');
+  if(inp)inp.oninput=()=>{APP.selectedSupplier=inp.value};
+  // Notes
+  const notes=$('#del-notes');
+  if(notes)notes.oninput=()=>{APP.deliveryNotes=notes.value};
+  // Report files
+  const reportBtn=$('#report-add-btn');
+  if(reportBtn)reportBtn.onclick=()=>$('#report-input').click();
+  $('#report-input').onchange=e=>{if(e.target.files.length){APP.reportFiles.push(...Array.from(e.target.files));e.target.value='';render()}};
+  document.querySelectorAll('[data-rm-report]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();APP.reportFiles.splice(+el.dataset.rmReport,1);render()}
+  });
+  // Photo files
+  const photoBtn=$('#photo-add-btn');
+  if(photoBtn)photoBtn.onclick=()=>$('#photo-input').click();
+  const photoInput=$('#photo-input');
+  if(photoInput)photoInput.onchange=e=>{if(e.target.files.length){APP.itemPhotos.push(...Array.from(e.target.files));e.target.value='';render()}};
+  document.querySelectorAll('[data-rm-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();APP.itemPhotos.splice(+el.dataset.rmPhoto,1);render()}
+  });
+  // Barcodes
+  document.querySelectorAll('[data-rm-bc]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();APP.scannedBarcodes.splice(+el.dataset.rmBc,1);render()}
+  });
+  const bcAdd=$('#bc-add-btn');
+  const bcMan=$('#bc-manual');
+  if(bcAdd){bcAdd.onclick=()=>{const v=bcMan.value.trim();if(v&&!APP.scannedBarcodes.includes(v)){APP.scannedBarcodes.push(v);render()}}}
+  if(bcMan){bcMan.onkeydown=e=>{if(e.key==='Enter'){const v=bcMan.value.trim();if(v&&!APP.scannedBarcodes.includes(v)){APP.scannedBarcodes.push(v);render()}}}}
+  // Scanner
+  const scanBtn=$('#scan-btn');
+  if(scanBtn){scanBtn.onclick=()=>{if(APP.scanning)stopScanner();else startScanner()}}
+  // Process
+  const procBtn=$('#process-btn');
+  if(procBtn)procBtn.onclick=processDelivery;
+}
+
+function bindResults(){
+  const backBtn=$('#results-back-btn');
+  if(backBtn)backBtn.onclick=()=>{APP.results=null;APP.viewingHistory=null;APP.reportFiles=[];APP.itemPhotos=[];APP.scannedBarcodes=[];APP.deliveryNotes='';APP.selectedSupplier='';APP.issuesOnly=false;APP.expandedRows.clear();render()};
+  const togIssues=$('#toggle-issues');
+  if(togIssues)togIssues.onclick=()=>{APP.issuesOnly=!APP.issuesOnly;render()};
+  const posBtn=$('#pos-entry-btn');
+  if(posBtn)posBtn.onclick=()=>{APP.showPOSEntry=true;render()};
+  const expBtn=$('#export-btn');
+  if(expBtn)expBtn.onclick=()=>{const items=APP.results||APP.viewingHistory?.items||[];const notes=APP.deliveryNotes||APP.viewingHistory?.notes||'';downloadCSV(items,notes,APP.selectedSupplier||APP.viewingHistory?.supplier)};
+  // Row toggles
+  document.querySelectorAll('[data-toggle-row]').forEach(el=>{
+    el.onclick=()=>{const id=el.dataset.toggleRow;APP.expandedRows.has(id)?APP.expandedRows.delete(id):APP.expandedRows.add(id);render()}
+  });
+  // Damage toggles
+  document.querySelectorAll('[data-toggle-dmg]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();const id=el.dataset.toggleDmg;
+      const items=APP.results||APP.viewingHistory?.items||[];
+      const item=items.find(i=>i.id===id);if(!item)return;
+      item.damaged=!item.damaged;item.status=item.damaged?'Damaged':(item.confidence<70?'NEW ITEM':'Matched');render()}
+  });
+  // Confirm match
+  document.querySelectorAll('[data-confirm-match]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();const id=el.dataset.confirmMatch;
+      const items=APP.results||APP.viewingHistory?.items||[];
+      const item=items.find(i=>i.id===id);if(!item||!item.posCode||!APP.selectedSupplier)return;
+      const sup=APP.suppliers.find(s=>s.name===APP.selectedSupplier);if(!sup)return;
+      if(!sup.mappings)sup.mappings={};
+      sup.mappings[normalize(item.name)]=item.posCode;
+      item.learned=true;
+      store.set('suppliers',APP.suppliers);render()}
+  });
+  // Damage notes
+  document.querySelectorAll('[data-dmg-note]').forEach(el=>{
+    el.oninput=()=>{const id=el.dataset.dmgNote;const items=APP.results||APP.viewingHistory?.items||[];const item=items.find(i=>i.id===id);if(item)item.damageNote=el.value}
+  });
+  // Manual notes
+  document.querySelectorAll('[data-manual-note]').forEach(el=>{
+    el.oninput=()=>{const id=el.dataset.manualNote;const items=APP.results||APP.viewingHistory?.items||[];const item=items.find(i=>i.id===id);if(item)item.manualNotes=el.value}
+  });
+}
+
+function bindHistory(){
+  const searchInput=$('#hist-search');
+  if(searchInput){
+    searchInput.oninput=()=>{
+      const q=searchInput.value.toLowerCase();
+      document.querySelectorAll('[data-view-hist]').forEach(el=>{
+        const h=APP.history.find(h=>h.id===el.dataset.viewHist);
+        if(!h)return;
+        const match=(h.supplier||'').toLowerCase().includes(q)||fmt(h.date).toLowerCase().includes(q);
+        el.style.display=match?'':'none';
+      });
+    };
+  }
+  document.querySelectorAll('[data-view-hist]').forEach(el=>{
+    el.onclick=e=>{
+      if(e.target.closest('[data-del-hist]'))return;
+      const h=APP.history.find(h=>h.id===el.dataset.viewHist);
+      if(h){APP.viewingHistory=h;APP.page='delivery';render()}
+    }
+  });
+  document.querySelectorAll('[data-del-hist]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();if(confirm('Delete this record?')){
+      APP.history=APP.history.filter(h=>h.id!==el.dataset.delHist);
+      store.set('history',APP.history);render()}}
+  });
+}
+
+function bindSuppliers(){
+  const addBtn=$('#add-sup-btn');
+  if(addBtn){addBtn.onclick=()=>{
+    const name=$('#new-sup-name').value.trim();if(!name)return;
+    const notes=$('#new-sup-notes').value.trim();
+    APP.suppliers.push({name,notes,mappings:{}});
+    store.set('suppliers',APP.suppliers);render()}}
+  document.querySelectorAll('[data-del-sup]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();if(confirm(`Delete ${el.dataset.delSup}?`)){
+      APP.suppliers=APP.suppliers.filter(s=>s.name!==el.dataset.delSup);
+      store.set('suppliers',APP.suppliers);render()}}
+  });
+}
+
+function bindSettings(){
+  const showBtn=$('#set-key-show');
+  if(showBtn){showBtn.onclick=()=>{const inp=$('#set-key');inp.type=inp.type==='password'?'text':'password'}}
+  const saveBtn=$('#set-key-save');
+  if(saveBtn){saveBtn.onclick=()=>{APP.apiKey=$('#set-key').value.trim();store.set('api-key',APP.apiKey);alert('API key saved')}}
+  const posBtn=$('#set-pos-btn');
+  if(posBtn){posBtn.onclick=()=>$('#set-pos-file').click()}
+  const posFile=$('#set-pos-file');
+  if(posFile){posFile.onchange=e=>{if(e.target.files[0])parsePOSPdf(e.target.files[0])}}
+  const clearPOS=$('#set-pos-clear');
+  if(clearPOS){clearPOS.onclick=()=>{if(confirm('Clear POS data?')){APP.posData=null;store.del('pos-data');render()}}}
+  const clearHist=$('#set-clear-hist');
+  if(clearHist){clearHist.onclick=()=>{if(confirm('Clear ALL history?')){APP.history=[];store.set('history',[]);render()}}}
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  CORE LOGIC                                         */
+/* ═══════════════════════════════════════════════════ */
+
+/* Parse POS PDF */
+async function parsePOSPdf(file){
+  APP.processing=true;APP.processStep='Converting PDF...';render();
+  try{
+    const base64=await fileToBase64(file);
+    APP.processStep='AI parsing POS data...';render();
+    const data=await callClaude(APP.apiKey,[{role:'user',content:[
+      {type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}},
+      {type:'text',text:`This is a POS stocklist PDF exported from Idealpos. Extract EVERY item row from ALL pages. Each item row has columns: Code (numeric), Description (text), Average Cost, Selling Price(s), Margin %. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows. Extract ONLY the Code and Description fields — ignore cost, price, and margin columns. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array. Process ALL pages thoroughly.`}
+    ]}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.');
+    APP.processStep='Processing...';render();
+    const text=data.content.map(c=>c.text||'').join('');
+    const clean=text.replace(/```json|```/g,'').trim();
+    let items;
+    try{items=JSON.parse(clean)}catch{const m=clean.match(/\[[\s\S]*\]/);if(m)items=JSON.parse(m[0]);else throw new Error('Could not parse POS data')}
+    APP.posData={items,updatedAt:new Date().toISOString()};
+    store.set('pos-data',APP.posData);
+    store.set('skip-pos',true);
+  }catch(err){alert('Error parsing POS PDF: '+err.message)}
+  finally{APP.processing=false;APP.processStep='';render()}
+}
+
+/* Process Delivery */
+async function processDelivery(){
+  if(!APP.reportFiles.length)return alert('Upload a delivery report first.');
+  APP.processing=true;APP.processStep='Reading files...';render();
+  try{
+    const content=[];
+    for(const f of APP.reportFiles){
+      const b64=await fileToBase64(f);
+      const isPdf=f.type.includes('pdf');
+      content.push(isPdf?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:f.type||'image/jpeg',data:b64}});
+    }
+    for(const f of APP.itemPhotos){
+      const b64=await fileToBase64(f);
+      content.push({type:'image',source:{type:'base64',media_type:f.type||'image/jpeg',data:b64}});
+    }
+    const supProfile=APP.suppliers.find(s=>s.name===APP.selectedSupplier);
+    const supContext=supProfile?`Supplier: ${supProfile.name}. Notes: ${supProfile.notes||'none'}.`:'';
+    content.push({type:'text',text:`Analyze this delivery. The first image(s)/document(s) are the supplier delivery report/invoice. ${APP.itemPhotos.length?'The remaining images show physical items received.':'No physical item photos provided.'}
+${supContext}
+${APP.scannedBarcodes.length?'Scanned barcodes: '+APP.scannedBarcodes.join(', '):''}
+Extract ALL line items from the delivery report with quantities.
+${APP.itemPhotos.length?'Then identify products visible in item photos and match them to delivery report items.':''}
+Return ONLY a JSON array with objects for EVERY delivery line item:
+{"name":"item name from delivery report","qtyExpected":number,"physicalMatch":true/false,"physicalNotes":"any condition notes"}
+Include EVERY line item. No markdown fences, just the raw JSON array.`});
+
+    APP.processStep='AI analyzing delivery...';render();
+    const data=await callClaude(APP.apiKey,[{role:'user',content}],
+      'You are a delivery reconciliation assistant. Analyze delivery documents carefully. Return only valid JSON.');
+    const text=data.content.map(c=>c.text||'').join('');
+    const clean=text.replace(/```json|```/g,'').trim();
+    let items;
+    try{items=JSON.parse(clean)}catch{const m=clean.match(/\[[\s\S]*\]/);if(m)items=JSON.parse(m[0]);else throw new Error('Could not parse delivery data')}
+
+    APP.processStep='Matching POS stocklist...';render();
+    const mappings=supProfile?.mappings||{};
+    const reconciled=items.map(item=>{
+      // Barcode match first
+      let bcMatch=null;
+      if(APP.scannedBarcodes.length&&APP.posData?.items){
+        for(const bc of APP.scannedBarcodes){
+          const pm=APP.posData.items.find(p=>p.code===bc);
+          if(pm&&fuzzyScore(item.name,pm.description)>40){bcMatch=pm;break}
+        }
+      }
+      const posMatch=bcMatch?{code:bcMatch.code,name:bcMatch.description,confidence:99}:findBestPOSMatch(item.name,APP.posData?.items||[],mappings);
+      const isNew=posMatch.confidence<70;
+      let status='Matched';
+      if(isNew)status='NEW ITEM';
+      else if(!item.physicalMatch&&APP.itemPhotos.length)status='Not Found';
+      return{id:uid(),name:item.name,qtyExpected:item.qtyExpected||0,physicalMatch:item.physicalMatch||false,
+        physicalNotes:item.physicalNotes||'',posCode:posMatch.code,posName:posMatch.name,confidence:posMatch.confidence,
+        status,damaged:false,damageNote:'',manualNotes:'',learned:posMatch.learned||false};
+    });
+
+    APP.results=reconciled;
+
+    // Save to history
+    const record={id:uid(),date:new Date().toISOString(),supplier:APP.selectedSupplier||'Unknown',
+      notes:APP.deliveryNotes,items:reconciled,itemCount:reconciled.length,
+      issueCount:reconciled.filter(i=>i.status!=='Matched').length};
+    APP.history.unshift(record);
+    store.set('history',APP.history);
+  }catch(err){alert('Error: '+err.message)}
+  finally{APP.processing=false;APP.processStep='';render()}
+}
+
+/* ── Barcode scanner ── */
+APP.scanning=false;
+let scannerStream=null;
+
+function startScanner(){
+  navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(stream=>{
+    scannerStream=stream;APP.scanning=true;render();
+    setTimeout(()=>{
+      const area=$('#scanner-area');
+      if(!area)return;
+      area.innerHTML='<video id="scan-video" autoplay playsinline style="width:100%;border-radius:8px;display:block"></video>';
+      const video=$('#scan-video');
+      video.srcObject=stream;
+      if('BarcodeDetector' in window){
+        const detector=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39']});
+        const scan=async()=>{
+          if(!APP.scanning||!video)return;
+          try{const bcs=await detector.detect(video);for(const bc of bcs){
+            if(!APP.scannedBarcodes.includes(bc.rawValue)){APP.scannedBarcodes.push(bc.rawValue);render();return}
+          }}catch{}
+          if(APP.scanning)requestAnimationFrame(scan);
+        };
+        requestAnimationFrame(scan);
+      }else{
+        const area=$('#scanner-area');
+        if(area)area.innerHTML+='<p style="font-size:11px;color:var(--amber);margin-top:6px">BarcodeDetector not supported. Use Chrome on Android for scanning, or enter barcodes manually below.</p>';
+      }
+    },50);
+  }).catch(err=>{alert('Camera access denied: '+err.message)});
+}
+
+function stopScanner(){
+  if(scannerStream){scannerStream.getTracks().forEach(t=>t.stop());scannerStream=null}
+  APP.scanning=false;render();
+}
+
+/* ── Init ── */
+render();
+</script>
+</body>
+</html>
