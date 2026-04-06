@@ -199,6 +199,24 @@ function fileToBase64(file){
   return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=()=>rej(new Error('Read failed'));r.readAsDataURL(file)})
 }
 
+// Resize image to max 1600px on longest side, return base64 JPEG
+function resizeImage(file,maxPx=1600,quality=0.82){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      let{width:w,height:h}=img;
+      if(w>maxPx||h>maxPx){const s=maxPx/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s)}
+      const c=document.createElement('canvas');c.width=w;c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      res(c.toDataURL('image/jpeg',quality).split(',')[1]);
+    };
+    img.onerror=()=>rej(new Error('Image load failed'));
+    img.src=url;
+  });
+}
+
 /* ── CSV ── */
 function generateCSV(items,notes){
   const h=['Delivery Item','Qty Expected','Physical Match','POS Code','POS Name','Match Confidence','Damage Flag','Damage Note','Status','New Item','Manual Notes','Delivery Notes'];
@@ -400,7 +418,7 @@ function renderDeliveryForm(){
         ${icon('camera',16)}<span style="font-size:13px;font-weight:600">Physical Items (Optional)</span>
       </div>
       <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Photos of actual items received</p>
-      <input id="photo-input" type="file" accept="image/*" capture="environment" multiple style="display:none">
+      <input id="photo-input" type="file" accept="image/*" multiple style="display:none">
       <div class="upload-zone">
         <button class="upload-add" id="photo-add-btn">${icon('plus',14)} Add</button>
         ${photoChips}
@@ -891,13 +909,13 @@ async function processDelivery(){
   try{
     const content=[];
     for(const f of APP.reportFiles){
-      const b64=await fileToBase64(f);
       const isPdf=f.type.includes('pdf');
-      content.push(isPdf?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:f.type||'image/jpeg',data:b64}});
+      const b64=isPdf?await fileToBase64(f):await resizeImage(f);
+      content.push(isPdf?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}});
     }
     for(const f of APP.itemPhotos){
-      const b64=await fileToBase64(f);
-      content.push({type:'image',source:{type:'base64',media_type:f.type||'image/jpeg',data:b64}});
+      const b64=await resizeImage(f);
+      content.push({type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}});
     }
     const supProfile=APP.suppliers.find(s=>s.name===APP.selectedSupplier);
     const supContext=supProfile?`Supplier: ${supProfile.name}. Notes: ${supProfile.notes||'none'}.`:'';
