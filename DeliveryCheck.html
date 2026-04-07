@@ -60,12 +60,24 @@ input,textarea,select,button{font-family:inherit;color:inherit}
 .stat-val{font-size:20px;font-weight:800;font-family:var(--font-mono)}
 .stat-label{font-size:10px;color:var(--text3);margin-top:2px}
 /* result row */
-.result-row{border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:8px;background:var(--bg2)}
-.result-row.new-item{background:#e5a10008;border-color:#e5a10066}
-.result-row.damaged{background:#f4433608;border-color:#f4433666}
-.result-row.matched{border-color:#52b78844}
-.row-header{padding:12px 14px;cursor:pointer;display:flex;align-items:flex-start;gap:10px}
+.result-row{border:1px solid var(--border);border-left:3px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:8px;background:var(--bg2)}
+.result-row.row-red{border-left-color:#f44336;background:#f4433606}
+.result-row.row-yellow{border-left-color:#e5a100;background:#e5a10006}
+.result-row.row-green{border-left-color:#52b788;background:#52b78806}
+.result-row.damaged{border-left-color:#f44336!important;background:#f4433610!important}
+.row-header{padding:12px 14px;display:flex;align-items:center;gap:10px}
+.row-header-tap{flex:1;min-width:0;cursor:pointer}
 .row-details{padding:0 14px 12px;border-top:1px solid #2f333644}
+/* photo strip */
+.photo-strip{display:flex;gap:6px;flex-wrap:wrap;padding:8px 14px 4px}
+.photo-thumb{width:56px;height:56px;object-fit:cover;border-radius:6px;cursor:pointer;border:2px solid var(--green-dark)}
+/* camera button on each row */
+.btn-camera{padding:10px 12px;background:var(--green-dark);color:#fff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.btn-camera:active{background:#1e4d38}
+/* photo modal */
+.photo-modal{position:fixed;inset:0;background:#000000ee;z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
+.photo-modal img{max-width:100%;max-height:100%;border-radius:8px;object-fit:contain}
+.photo-modal-close{position:absolute;top:16px;right:16px;background:#ffffff22;border:none;color:#fff;border-radius:50%;width:40px;height:40px;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 /* pos entry mode */
 .pos-mode{min-height:100vh;background:#0a0d11;color:var(--text);font-family:var(--font-mono)}
 .pos-header{background:var(--bg2);padding:12px 16px;display:flex;justify-content:space-between;
@@ -271,6 +283,9 @@ const APP={
   issuesOnly:false,
   showPOSEntry:false,
   posChecked:new Set(),
+  // per-item photos (taken during unpacking)
+  itemPhotoMap:{}, // itemId -> array of blob URL strings
+  viewingPhoto:null, // blob URL currently open in modal
   // ui
   expandedRows:new Set(),
 };
@@ -412,19 +427,6 @@ function renderDeliveryForm(){
       </div>
     </div>
 
-    <!-- Photo Upload -->
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        ${icon('camera',16)}<span style="font-size:13px;font-weight:600">Physical Items (Optional)</span>
-      </div>
-      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Photos of actual items received</p>
-      <input id="photo-input" type="file" accept="image/*" multiple style="display:none">
-      <div class="upload-zone">
-        <button class="upload-add" id="photo-add-btn">${icon('plus',14)} Add</button>
-        ${photoChips}
-      </div>
-    </div>
-
     <!-- Barcode Scanner -->
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${APP.scanning?'10px':'0'}">
@@ -461,10 +463,10 @@ function renderDeliveryForm(){
 function renderResults(){
   const allItems=APP.results||APP.viewingHistory?.items||[];
   const items=APP.issuesOnly?allItems.filter(i=>i.status!=='Matched'):allItems;
-  const matched=allItems.filter(i=>i.status==='Matched').length;
+  const confirmed=allItems.filter(i=>(APP.itemPhotoMap[i.id]||[]).length>0).length;
   const newC=allItems.filter(i=>i.status==='NEW ITEM').length;
   const dmg=allItems.filter(i=>i.damaged).length;
-  const issues=allItems.filter(i=>i.status!=='Matched').length;
+  const issues=allItems.filter(i=>i.status!=='Matched'||!(APP.itemPhotoMap[i.id]||[]).length).length;
   const supplier=APP.selectedSupplier||APP.viewingHistory?.supplier||'';
   const notes=APP.deliveryNotes||APP.viewingHistory?.notes||'';
   const isHist=!!APP.viewingHistory;
@@ -482,7 +484,7 @@ function renderResults(){
 
   html+=`<div class="stats">
     <div class="stat"><div class="stat-val" style="color:var(--text2)">${allItems.length}</div><div class="stat-label">Total</div></div>
-    <div class="stat"><div class="stat-val" style="color:var(--green)">${matched}</div><div class="stat-label">Matched</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--green)">${confirmed}</div><div class="stat-label">Confirmed</div></div>
     <div class="stat"><div class="stat-val" style="color:var(--amber)">${newC}</div><div class="stat-label">New</div></div>
     <div class="stat"><div class="stat-val" style="color:var(--red)">${dmg}</div><div class="stat-label">Damaged</div></div>
   </div>`;
@@ -495,40 +497,55 @@ function renderResults(){
     <button class="btn btn-ghost" id="export-btn">${icon('download',14)} CSV</button>
   </div>`;
 
+  // hidden file input for per-item camera
+  html+=`<input id="item-photo-input" type="file" accept="image/*" capture="environment" style="display:none">`;
+
   // Item rows
   html+=`<div id="results-list">`;
   for(const item of items){
-    const isNew=item.status==='NEW ITEM';
     const isDmg=item.damaged||item.status==='Damaged';
-    const cls=isNew?'new-item':isDmg?'damaged':item.status==='Matched'?'matched':'';
-    const confColor=item.confidence>=80?'var(--green)':item.confidence>=60?'var(--amber)':'var(--red)';
-    const expanded=APP.expandedRows.has(item.id);
+    const photos=APP.itemPhotoMap[item.id]||[];
+    const hasPhoto=photos.length>0;
 
-    html+=`<div class="result-row ${cls}">
-      <div class="row-header" data-toggle-row="${item.id}">
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-            ${isNew?'<span class="badge badge-new">NEW</span>':''}
-            ${isDmg?'<span class="badge badge-dmg">DMG</span>':''}
-            <span style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+    // Row colour: green=photo taken, yellow=uncertain/new, red=no photo yet
+    let rowCls='row-red';
+    if(hasPhoto) rowCls='row-green';
+    else if(item.confidence<70||item.status==='NEW ITEM') rowCls='row-yellow';
+    if(isDmg) rowCls='damaged';
+
+    // POS indicator
+    const posIndicator=item.confidence>=80||item.learned?'✅':item.confidence>=50?'⚠️':'❌';
+
+    const expanded=APP.expandedRows.has(item.id);
+    const confColor=item.confidence>=80?'var(--green)':item.confidence>=50?'var(--amber)':'var(--red)';
+
+    html+=`<div class="result-row ${rowCls}">
+      <div class="row-header">
+        <div class="row-header-tap" data-toggle-row="${item.id}">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+            <span style="font-size:16px;line-height:1">${posIndicator}</span>
+            <span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
           </div>
-          <div style="display:flex;gap:12px;font-size:11px;color:var(--text3)">
+          <div style="display:flex;gap:10px;font-size:11px;color:var(--text3);padding-left:22px">
             <span>Qty: <b style="color:var(--text)">${item.qtyExpected}</b></span>
             ${item.posCode?`<span style="font-family:var(--font-mono)">POS: <b style="color:var(--green)">${item.posCode}</b></span>`:''}
             <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span>
+            ${hasPhoto?`<span style="color:var(--green)">📷 ${photos.length}</span>`:''}
           </div>
         </div>
-        ${expanded?icon('chevDown',16):icon('chevRight',16)}
+        <button class="btn-camera" data-item-photo="${item.id}" title="Take photo">${icon('camera',20)}</button>
       </div>`;
 
+    // Photo strip (always visible when photos exist)
+    if(photos.length){
+      html+=`<div class="photo-strip">${photos.map((url,pi)=>`<img class="photo-thumb" src="${url}" data-view-photo="${url}" data-item-id="${item.id}" data-photo-idx="${pi}">`).join('')}</div>`;
+    }
+
     if(expanded){
-      const statusColor=item.status==='Matched'?'var(--green)':item.status==='NEW ITEM'?'var(--amber)':item.status==='Damaged'?'var(--red)':'var(--text2)';
       html+=`<div class="row-details"><div style="padding-top:10px;display:grid;gap:8px;font-size:12px">
         <div><span style="color:var(--text3)">POS Match:</span> <span style="color:var(--text2)">${item.posName||'—'}</span></div>
         <div><span style="color:var(--text3)">POS Code:</span> <span style="font-family:var(--font-mono);color:var(--green)">${item.posCode||'—'}</span></div>
         <div><span style="color:var(--text3)">Confidence:</span> <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span></div>
-        <div><span style="color:var(--text3)">Physical:</span> <span>${item.physicalMatch?'✓ Seen':'Not verified'}</span></div>
-        <div><span style="color:var(--text3)">Status:</span> <span style="color:${statusColor};font-weight:600">${item.status}</span></div>
         <div style="display:flex;gap:8px;margin-top:4px">
           <button class="btn ${isDmg?'btn-danger':'btn-ghost'}" data-toggle-dmg="${item.id}" style="flex:1;font-size:12px">
             ${icon('flag',14)} ${isDmg?'Remove Flag':'Flag Damage'}
@@ -536,15 +553,25 @@ function renderResults(){
           ${item.confidence>=50&&item.confidence<95&&!item.learned?`<button class="btn" data-confirm-match="${item.id}" style="background:#2d6a4f22;border:1px solid var(--green-dark);color:var(--green);font-size:12px">${icon('check',14)} Confirm</button>`:''}
         </div>
         ${isDmg?`<input class="input" data-dmg-note="${item.id}" placeholder="Damage description..." value="${item.damageNote||''}" style="font-size:12px;padding:8px 10px;border-color:#f4433644">`:''}
-        ${isNew?`<input class="input" data-manual-note="${item.id}" placeholder="Manual POS code or notes..." value="${item.manualNotes||''}" style="font-size:12px;padding:8px 10px;font-family:var(--font-mono);border-color:#e5a10044">`:''}
+        ${item.status==='NEW ITEM'?`<input class="input" data-manual-note="${item.id}" placeholder="Manual POS code or notes..." value="${item.manualNotes||''}" style="font-size:12px;padding:8px 10px;font-family:var(--font-mono);border-color:#e5a10044">`:''}
       </div></div>`;
     }
     html+=`</div>`;
   }
   if(!items.length){
-    html+=`<div style="text-align:center;padding:32px;color:var(--text3)">${APP.issuesOnly?'No issues found — all items matched!':'No items to display.'}</div>`;
+    html+=`<div style="text-align:center;padding:32px;color:var(--text3)">${APP.issuesOnly?'No issues found!':'No items to display.'}</div>`;
   }
-  html+=`</div></div>`;
+  html+=`</div>`;
+
+  // Photo modal
+  if(APP.viewingPhoto){
+    html+=`<div class="photo-modal" id="photo-modal">
+      <button class="photo-modal-close" id="photo-modal-close">✕</button>
+      <img src="${APP.viewingPhoto}">
+    </div>`;
+  }
+
+  html+=`</div>`;
   return html;
 }
 
@@ -726,14 +753,6 @@ function bindDeliveryForm(){
   document.querySelectorAll('[data-rm-report]').forEach(el=>{
     el.onclick=e=>{e.stopPropagation();APP.reportFiles.splice(+el.dataset.rmReport,1);render()}
   });
-  // Photo files
-  const photoBtn=$('#photo-add-btn');
-  if(photoBtn)photoBtn.onclick=()=>$('#photo-input').click();
-  const photoInput=$('#photo-input');
-  if(photoInput)photoInput.onchange=e=>{if(e.target.files.length){APP.itemPhotos.push(...Array.from(e.target.files));e.target.value='';render()}};
-  document.querySelectorAll('[data-rm-photo]').forEach(el=>{
-    el.onclick=e=>{e.stopPropagation();APP.itemPhotos.splice(+el.dataset.rmPhoto,1);render()}
-  });
   // Barcodes
   document.querySelectorAll('[data-rm-bc]').forEach(el=>{
     el.onclick=e=>{e.stopPropagation();APP.scannedBarcodes.splice(+el.dataset.rmBc,1);render()}
@@ -752,7 +771,13 @@ function bindDeliveryForm(){
 
 function bindResults(){
   const backBtn=$('#results-back-btn');
-  if(backBtn)backBtn.onclick=()=>{APP.results=null;APP.viewingHistory=null;APP.reportFiles=[];APP.itemPhotos=[];APP.scannedBarcodes=[];APP.deliveryNotes='';APP.selectedSupplier='';APP.issuesOnly=false;APP.expandedRows.clear();render()};
+  if(backBtn)backBtn.onclick=()=>{
+    // Revoke blob URLs to free memory
+    Object.values(APP.itemPhotoMap).flat().forEach(url=>URL.revokeObjectURL(url));
+    APP.results=null;APP.viewingHistory=null;APP.reportFiles=[];APP.itemPhotos=[];
+    APP.scannedBarcodes=[];APP.deliveryNotes='';APP.selectedSupplier='';
+    APP.issuesOnly=false;APP.expandedRows.clear();APP.itemPhotoMap={};APP.viewingPhoto=null;render();
+  };
   const togIssues=$('#toggle-issues');
   if(togIssues)togIssues.onclick=()=>{APP.issuesOnly=!APP.issuesOnly;render()};
   const posBtn=$('#pos-entry-btn');
@@ -789,6 +814,34 @@ function bindResults(){
   document.querySelectorAll('[data-manual-note]').forEach(el=>{
     el.oninput=()=>{const id=el.dataset.manualNote;const items=APP.results||APP.viewingHistory?.items||[];const item=items.find(i=>i.id===id);if(item)item.manualNotes=el.value}
   });
+  // Per-item camera buttons — single shared file input
+  let currentCameraItemId=null;
+  const itemPhotoInput=$('#item-photo-input');
+  if(itemPhotoInput){
+    itemPhotoInput.onchange=async e=>{
+      if(!e.target.files.length||!currentCameraItemId)return;
+      const files=Array.from(e.target.files);
+      if(!APP.itemPhotoMap[currentCameraItemId])APP.itemPhotoMap[currentCameraItemId]=[];
+      for(const f of files){
+        const url=URL.createObjectURL(f);
+        APP.itemPhotoMap[currentCameraItemId].push(url);
+      }
+      e.target.value='';
+      render();
+    };
+  }
+  document.querySelectorAll('[data-item-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();currentCameraItemId=el.dataset.itemPhoto;if(itemPhotoInput)itemPhotoInput.click()}
+  });
+  // Photo thumbnails → open modal
+  document.querySelectorAll('[data-view-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();APP.viewingPhoto=el.dataset.viewPhoto;render()}
+  });
+  // Modal close
+  const modalClose=$('#photo-modal-close');
+  if(modalClose)modalClose.onclick=()=>{APP.viewingPhoto=null;render()};
+  const modal=$('#photo-modal');
+  if(modal)modal.onclick=e=>{if(e.target===modal){APP.viewingPhoto=null;render()}}
 }
 
 function bindHistory(){
@@ -913,19 +966,14 @@ async function processDelivery(){
       const b64=isPdf?await fileToBase64(f):await resizeImage(f);
       content.push(isPdf?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}});
     }
-    for(const f of APP.itemPhotos){
-      const b64=await resizeImage(f);
-      content.push({type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}});
-    }
     const supProfile=APP.suppliers.find(s=>s.name===APP.selectedSupplier);
     const supContext=supProfile?`Supplier: ${supProfile.name}. Notes: ${supProfile.notes||'none'}.`:'';
-    content.push({type:'text',text:`Analyze this delivery. The first image(s)/document(s) are the supplier delivery report/invoice. ${APP.itemPhotos.length?'The remaining images show physical items received.':'No physical item photos provided.'}
+    content.push({type:'text',text:`Analyze this delivery report/invoice.
 ${supContext}
 ${APP.scannedBarcodes.length?'Scanned barcodes: '+APP.scannedBarcodes.join(', '):''}
-Extract ALL line items from the delivery report with quantities.
-${APP.itemPhotos.length?'Then identify products visible in item photos and match them to delivery report items.':''}
+Extract ALL line items from the delivery report with their quantities. Preserve the original order.
 Return ONLY a JSON array with objects for EVERY delivery line item:
-{"name":"item name from delivery report","qtyExpected":number,"physicalMatch":true/false,"physicalNotes":"any condition notes"}
+{"name":"item name from delivery report","qtyExpected":number}
 Include EVERY line item. No markdown fences, just the raw JSON array.`});
 
     APP.processStep='AI analyzing delivery...';render();
@@ -949,11 +997,9 @@ Include EVERY line item. No markdown fences, just the raw JSON array.`});
       }
       const posMatch=bcMatch?{code:bcMatch.code,name:bcMatch.description,confidence:99}:findBestPOSMatch(item.name,APP.posData?.items||[],mappings);
       const isNew=posMatch.confidence<70;
-      let status='Matched';
-      if(isNew)status='NEW ITEM';
-      else if(!item.physicalMatch&&APP.itemPhotos.length)status='Not Found';
-      return{id:uid(),name:item.name,qtyExpected:item.qtyExpected||0,physicalMatch:item.physicalMatch||false,
-        physicalNotes:item.physicalNotes||'',posCode:posMatch.code,posName:posMatch.name,confidence:posMatch.confidence,
+      const status=isNew?'NEW ITEM':'Matched';
+      return{id:uid(),name:item.name,qtyExpected:item.qtyExpected||0,
+        posCode:posMatch.code,posName:posMatch.name,confidence:posMatch.confidence,
         status,damaged:false,damageNote:'',manualNotes:'',learned:posMatch.learned||false};
     });
 
