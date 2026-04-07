@@ -444,11 +444,25 @@ function renderDeliveryForm(){
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         ${icon('file',16)}<span style="font-size:13px;font-weight:600">Delivery Report / Invoice</span>
       </div>
-      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Photo or PDF of the supplier's delivery docket</p>
+      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">PDF or photo of the supplier's delivery docket</p>
       <input id="report-input" type="file" accept="image/*,.pdf" multiple style="display:none">
       <div class="upload-zone">
         <button class="upload-add" id="report-add-btn">${icon('plus',14)} Add</button>
         ${reportChips}
+      </div>
+    </div>
+
+    <!-- Item Photos -->
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        ${icon('camera',16)}<span style="font-size:13px;font-weight:600">Delivery Item Photos <span style="font-weight:400;color:var(--text3)">(optional)</span></span>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Upload any photos of the delivered items now — you can also add more per item after processing</p>
+      <input id="photo-input" type="file" accept="image/*" multiple style="display:none">
+      <div class="upload-zone">
+        <button class="upload-add" id="photo-add-btn">${icon('camera',14)} Camera</button>
+        <button class="upload-add" id="photo-file-btn" style="border-style:solid">${icon('plus',14)} Gallery</button>
+        ${photoChips}
       </div>
     </div>
 
@@ -807,6 +821,16 @@ function bindDeliveryForm(){
   document.querySelectorAll('[data-rm-report]').forEach(el=>{
     el.onclick=e=>{e.stopPropagation();APP.reportFiles.splice(+el.dataset.rmReport,1);render()}
   });
+  // Item photos (pre-processing overview shots)
+  const photoCamBtn=$('#photo-add-btn');
+  const photoFileBtn=$('#photo-file-btn');
+  const photoInput=$('#photo-input');
+  if(photoCamBtn)photoCamBtn.onclick=()=>{if(photoInput){photoInput.removeAttribute('capture');photoInput.setAttribute('capture','environment');photoInput.click()}};
+  if(photoFileBtn)photoFileBtn.onclick=()=>{if(photoInput){photoInput.removeAttribute('capture');photoInput.click()}};
+  if(photoInput)photoInput.onchange=e=>{if(e.target.files.length){APP.itemPhotos.push(...Array.from(e.target.files));e.target.value='';render()}};
+  document.querySelectorAll('[data-rm-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();APP.itemPhotos.splice(+el.dataset.rmPhoto,1);render()}
+  });
   // Barcodes
   document.querySelectorAll('[data-rm-bc]').forEach(el=>{
     el.onclick=e=>{e.stopPropagation();APP.scannedBarcodes.splice(+el.dataset.rmBc,1);render()}
@@ -1061,9 +1085,13 @@ async function processDelivery(){
       const b64=isPdf?await fileToBase64(f):await resizeImage(f);
       content.push(isPdf?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}});
     }
+    for(const f of APP.itemPhotos){
+      const b64=await resizeImage(f);
+      content.push({type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}});
+    }
     const supProfile=APP.suppliers.find(s=>s.name===APP.selectedSupplier);
     const supContext=supProfile?`Supplier: ${supProfile.name}. Notes: ${supProfile.notes||'none'}.`:'';
-    content.push({type:'text',text:`Analyze this delivery report/invoice.
+    content.push({type:'text',text:`Analyze this delivery report/invoice.${APP.itemPhotos.length?' The additional images are photos of the delivered items.':''}
 ${supContext}
 ${APP.scannedBarcodes.length?'Scanned barcodes: '+APP.scannedBarcodes.join(', '):''}
 Extract ALL line items from the delivery report with their quantities. Preserve the original order.
