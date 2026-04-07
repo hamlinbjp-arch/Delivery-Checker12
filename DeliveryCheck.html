@@ -835,13 +835,15 @@ function renderPOSStep(){
   const uncertain=allItems.filter(i=>i.confidence>=45&&i.confidence<80&&!i.learned).length;
   const newItems=allItems.filter(i=>i.confidence<45).length;
   const supplier=APP.selectedSupplier||'';
+  // Find which POS supplier section was used (from first matched item)
+  const posSupSection=allItems.find(i=>i.posSupplier)?.posSupplier||'';
 
   let html=`<div style="padding-top:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div>
         <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">STEP 2 OF 2</div>
         <h2 style="font-size:18px;font-weight:700;margin:0">🔍 POS Matching</h2>
-        ${supplier?`<p style="font-size:12px;color:var(--text3);margin:2px 0 0">${supplier}</p>`:''}
+        ${supplier?`<p style="font-size:12px;color:var(--text3);margin:2px 0 0">${supplier}${posSupSection?` · POS section: <b style="color:var(--green)">${posSupSection}</b>`:''}</p>`:''}
       </div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-ghost" id="back-to-verify-btn" style="padding:6px 10px;font-size:12px">← Photos</button>
@@ -1520,18 +1522,25 @@ async function analyzePhotoItems(photoIdx){
     const b64=await resizeImage(file);
     const data=await callClaude(APP.apiKey,[{role:'user',content:[
       {type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}},
-      {type:'text',text:`These are the items listed on the delivery report:
+      {type:'text',text:`Delivery items list:
 ${itemList}
 
-Look carefully at this photo. For EACH item in the list, determine if it is visible.
-Return ONLY a JSON array (no markdown):
-[{"name":"exact name from list","visible":true or false,"confidence":0-100,"reason":"brief explanation of what you can or cannot see, and why you are uncertain if applicable"}]
-Cover ALL items. Be specific about what makes you uncertain.`}
-    ]}],'You are a delivery verification assistant. Carefully examine photos to identify products visible in them.',4000);
-    const text=data.content.map(c=>c.text||'').join('');
-    const clean=text.replace(/```json|```/g,'').trim();
+Check this photo for those items. For each item say if it is visible.
+Output ONLY a raw JSON array, no markdown, no explanation outside JSON:
+[{"name":"item name","visible":true,"confidence":80,"reason":"why certain or uncertain"},...]
+Include every item from the list.`}
+    ]}],'Output only a raw JSON array. No markdown fences, no text outside the JSON.',6000);
+    const raw=data.content.map(c=>c.text||'').join('');
+    // Robust extraction: strip markdown, find outermost [ ]
+    const stripped=raw.replace(/```[a-z]*\n?/g,'').replace(/```/g,'').trim();
+    const s=stripped.indexOf('['),e=stripped.lastIndexOf(']');
     let results;
-    try{results=JSON.parse(clean)}catch{const m=clean.match(/\[[\s\S]*\]/);if(m)results=JSON.parse(m[0]);else throw new Error('Could not parse photo analysis')}
+    try{
+      if(s>=0&&e>s)results=JSON.parse(stripped.slice(s,e+1));
+      else results=JSON.parse(stripped);
+    }catch(pe){
+      throw new Error(`Parse failed (${pe.message}). Raw: ${stripped.slice(0,200)}`);
+    }
     // Auto-confirm items clearly visible with high confidence
     for(const r of results){
       if(r.visible&&r.confidence>=65){
@@ -1568,28 +1577,49 @@ async function parsePOSPdf(file){
     const allItems=[];
     const seen=new Set();
     // Idealpos rows: numeric code (3-7 digits) followed by description text
-    // e.g. "1234  Product Name Here  12.50  18.99  33.9%"
-    const itemRow=/^\s*(\d{3,7})\s{1,6}([A-Za-z][^\t\n]{2,60}?)(?:\s{2,}|\t|$)/;
+    const itemRow=/^\s*(\d{3,7})\s{1,6}([A-Za-z][^\t\n]{2,80}?)(?:\s{2,}|\t|$)/;
+    // Supplier section headers: lines that look like a company name (no leading number, no prices)
+    const supplierHeader=/^([A-Z][A-Za-z0-9\s&'.,/()-]{2,50})$/;
+    let currentSupplier='';
     for(let i=1;i<=totalPages;i++){
       if(i%20===0){APP.processStep=`Parsing page ${i}/${totalPages}...`;render()}
       const page=await pdf.getPage(i);
       const tc=await page.getTextContent();
-      // Group text items by y-position to reconstruct rows
+      // Group text items by y-position, tracking x-positions to split columns
       const rows={};
       for(const item of tc.items){
         if(!item.str.trim())continue;
         const y=Math.round(item.transform[5]);
-        if(!rows[y])rows[y]={x:item.transform[4],text:''};
-        rows[y].text+=(rows[y].text?' ':'')+item.str;
+        const x=Math.round(item.transform[4]);
+        if(!rows[y])rows[y]={startX:x,parts:[]};
+        rows[y].parts.push({x,text:item.str});
       }
       // Process rows top-to-bottom (higher y = higher on page in PDF coords)
       for(const y of Object.keys(rows).map(Number).sort((a,b)=>b-a)){
-        const line=rows[y].text.trim();
-        const m=line.match(itemRow);
+        const {startX,parts}=rows[y];
+        parts.sort((a,b)=>a.x-b.x);
+        // Full line for supplier header detection
+        const fullLine=parts.map(p=>p.text).join(' ').trim();
+        // Name columns only: exclude parts far to the right (price/qty columns)
+        // Use first 55% of page width relative to row start (heuristic for Idealpos)
+        const pageWidthGuess=500; // typical PDF page width in pts
+        const nameOnly=parts.filter(p=>p.x<startX+pageWidthGuess*0.55).map(p=>p.text).join(' ').trim();
+        const m=nameOnly.match(itemRow)||fullLine.match(itemRow);
         if(m){
           const code=m[1];
-          const desc=m[2].trim();
-          if(!seen.has(code)&&desc.length>1){seen.add(code);allItems.push({code,description:desc})}
+          // Strip any trailing price data: decimal numbers with 2dp (e.g. "21.74 8596 75.00")
+          const desc=m[2].trim().replace(/\s+\d+\.\d{2}.*$/,'').replace(/\s{2,}.*$/,'').trim();
+          if(!seen.has(code)&&desc.length>1){seen.add(code);allItems.push({code,description:desc,supplier:currentSupplier})}
+        }else{
+          // Check for supplier section header (no leading number, looks like a company name)
+          const sh=fullLine.match(supplierHeader);
+          if(sh&&!fullLine.match(/^\d/)&&fullLine.length>=4&&fullLine.length<=52){
+            // Require at least 2 words or unusual length to avoid matching column headers
+            const words=fullLine.trim().split(/\s+/);
+            if(words.length>=2||(words.length===1&&fullLine.length>7)){
+              currentSupplier=fullLine.trim();
+            }
+          }
         }
       }
     }
@@ -1639,6 +1669,20 @@ Include EVERY line item.`});
     APP.processStep='Matching POS stocklist...';render();
     const mappings=supProfile?.mappings||{};
     const aliases=APP.posData?.aliases||{};
+    // Narrow POS items to the supplier's section if the stocklist has supplier grouping
+    let allPosItems=APP.posData?.items||[];
+    let posItemsForMatch=allPosItems;
+    const supName=APP.selectedSupplier||'';
+    if(supName&&allPosItems.some(p=>p.supplier)){
+      const supFiltered=allPosItems.filter(p=>{
+        if(!p.supplier)return false;
+        return fuzzyScore(supName,p.supplier)>=50;
+      });
+      if(supFiltered.length>=3){
+        posItemsForMatch=supFiltered;
+        APP.processStep=`Matching against ${supFiltered.length} ${supName} POS items...`;render();
+      }
+    }
     const reconciled=items.map(item=>{
       // Strip any leading "NNNNNN - " supplier code the AI may have left in the name
       const cleanName=(item.name||'').replace(/^\d[\d\s]*[-–]\s*/,'').trim()||item.name||'';
@@ -1646,18 +1690,19 @@ Include EVERY line item.`});
       const pageNumber=item.pageNumber||null;
       // Barcode match first
       let bcMatch=null;
-      if(APP.scannedBarcodes.length&&APP.posData?.items){
+      if(APP.scannedBarcodes.length&&allPosItems.length){
         for(const bc of APP.scannedBarcodes){
-          const pm=APP.posData.items.find(p=>p.code===bc);
+          const pm=allPosItems.find(p=>p.code===bc);
           if(pm&&fuzzyScore(cleanName,pm.description)>40){bcMatch=pm;break}
         }
       }
-      const posMatch=bcMatch?{code:bcMatch.code,name:bcMatch.description,confidence:99}:findBestPOSMatch(cleanName,APP.posData?.items||[],mappings,aliases);
+      const posMatch=bcMatch?{code:bcMatch.code,name:bcMatch.description,confidence:99}:findBestPOSMatch(cleanName,posItemsForMatch,mappings,aliases);
       const isNew=posMatch.confidence<45;
       const status=isNew?'NEW ITEM':'Matched';
       return{id:uid(),name:cleanName,supplierCode,pageNumber,qtyExpected:item.qtyExpected||0,
         posCode:posMatch.code,posName:posMatch.name,confidence:posMatch.confidence,
-        status,damaged:false,damageNote:'',manualNotes:'',learned:posMatch.learned||false};
+        status,damaged:false,damageNote:'',manualNotes:'',learned:posMatch.learned||false,
+        posSupplier:posItemsForMatch.find(p=>p.code===posMatch.code)?.supplier||''};
     });
 
     APP.results=reconciled;
