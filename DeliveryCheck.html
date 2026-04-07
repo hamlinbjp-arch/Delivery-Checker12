@@ -197,12 +197,32 @@ function fuzzyScore(a,b){
   }
   return Math.round(matched/Math.max(ta.length,tb.length)*100);
 }
-function findBestPOSMatch(itemName,posList,mappings={}){
+function findBestPOSMatch(itemName,posList,mappings={},aliases={}){
   if(!posList||!posList.length)return{code:'',name:'',confidence:0};
-  const mc=mappings[normalize(itemName)];
+  const key=normalize(itemName);
+  // 1. Supplier-learned exact mappings (highest priority)
+  const mc=mappings[key];
   if(mc){const e=posList.find(p=>p.code===mc);if(e)return{code:e.code,name:e.description,confidence:98,learned:true}}
+  // 2. Global alias mappings (physical label / internal name → POS code)
+  const ac=aliases[key];
+  if(ac){const e=posList.find(p=>p.code===ac);if(e)return{code:e.code,name:e.description,confidence:97,aliased:true}}
+  // 3. Fuzzy score against POS descriptions. Also check each POS item's aliases.
+  // Build reverse alias map: posCode → [aliasNames]
+  const reverseAlias={};
+  for(const[label,code] of Object.entries(aliases)){
+    if(!reverseAlias[code])reverseAlias[code]=[];
+    reverseAlias[code].push(label);
+  }
   let best={code:'',name:'',confidence:0};
-  for(const p of posList){const s=fuzzyScore(itemName,p.description);if(s>best.confidence)best={code:p.code,name:p.description,confidence:s}}
+  for(const p of posList){
+    let s=fuzzyScore(itemName,p.description);
+    // Also fuzzy-score against any aliases for this POS item
+    for(const alias of (reverseAlias[p.code]||[])){
+      const sa=fuzzyScore(itemName,alias);
+      if(sa>s)s=sa;
+    }
+    if(s>best.confidence)best={code:p.code,name:p.description,confidence:s};
+  }
   return best;
 }
 
@@ -231,8 +251,12 @@ function resizeImage(file,maxPx=1600,quality=0.82){
 
 /* ── CSV ── */
 function generateCSV(items,notes){
-  const h=['Delivery Item','Qty Expected','Physical Match','POS Code','POS Name','Match Confidence','Damage Flag','Damage Note','Status','New Item','Manual Notes','Delivery Notes'];
-  const rows=items.map(it=>[it.name,it.qtyExpected,it.physicalMatch?'Yes':'No',it.posCode,it.posName,pct(it.confidence),it.damaged?'Yes':'No',it.damageNote||'',it.status,it.status==='NEW ITEM'?'Yes':'No',it.manualNotes||'',notes||'']);
+  const h=['Item ID','Delivery Item','Qty Expected','POS Code','Idealpos Name','Match Confidence','Match Source','Photos Attached','Damage Flag','Damage Note','Status','Manual Notes','Delivery Notes'];
+  const rows=items.map(it=>{
+    const photoCount=(APP.itemPhotoMap[it.id]||[]).length;
+    const matchSrc=it.learned?'Learned':it.aliased?'Alias':'Fuzzy';
+    return[it.id,it.name,it.qtyExpected,it.posCode||'',it.posName||'',pct(it.confidence),matchSrc,photoCount,it.damaged?'Yes':'No',it.damageNote||'',it.status,it.manualNotes||'',notes||''];
+  });
   return[h.map(esc).join(','),...rows.map(r=>r.map(esc).join(','))].join('\n');
 }
 function downloadCSV(items,notes,supplier){
@@ -286,6 +310,7 @@ const APP={
   // per-item photos (taken during unpacking)
   itemPhotoMap:{}, // itemId -> array of blob URL strings
   viewingPhoto:null, // blob URL currently open in modal
+  resultsSearch:'', // filter text for results list
   // ui
   expandedRows:new Set(),
 };
@@ -462,7 +487,19 @@ function renderDeliveryForm(){
 /* ═══════════════════════════════════════════════════ */
 function renderResults(){
   const allItems=APP.results||APP.viewingHistory?.items||[];
-  const items=APP.issuesOnly?allItems.filter(i=>i.status!=='Matched'):allItems;
+  const aliases=APP.posData?.aliases||{};
+  // Fuzzy search across delivery name, Idealpos name, and alias labels
+  const q=APP.resultsSearch.trim();
+  const filtered=q?allItems.filter(i=>{
+    if(fuzzyScore(q,i.name)>=50)return true;
+    if(i.posName&&fuzzyScore(q,i.posName)>=50)return true;
+    // Check if query matches any alias that maps to this item's POS code
+    for(const[label,code] of Object.entries(aliases)){
+      if(code===i.posCode&&fuzzyScore(q,label)>=50)return true;
+    }
+    return false;
+  }):allItems;
+  const items=APP.issuesOnly?filtered.filter(i=>i.status!=='Matched'):filtered;
   const confirmed=allItems.filter(i=>(APP.itemPhotoMap[i.id]||[]).length>0).length;
   const newC=allItems.filter(i=>i.status==='NEW ITEM').length;
   const dmg=allItems.filter(i=>i.damaged).length;
@@ -489,6 +526,12 @@ function renderResults(){
     <div class="stat"><div class="stat-val" style="color:var(--red)">${dmg}</div><div class="stat-label">Damaged</div></div>
   </div>`;
 
+  html+=`<div style="margin-bottom:10px;position:relative">
+    <input id="results-search" class="input" placeholder="Search by name, Idealpos name, or label alias..." value="${APP.resultsSearch}" style="padding-left:32px;font-size:12px">
+    <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none;opacity:.5">${icon('search',14)}</span>
+    ${q?`<span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text3)">${filtered.length}/${allItems.length}</span>`:''}
+  </div>`;
+
   html+=`<div class="action-bar">
     <button class="btn ${APP.issuesOnly?'':'btn-ghost'}" id="toggle-issues" style="${APP.issuesOnly?'background:#e5a10022;border:1px solid var(--amber);color:var(--amber)':''}">
       ${icon('filter',14)} ${APP.issuesOnly?'All Items':`Issues (${issues})`}
@@ -497,8 +540,9 @@ function renderResults(){
     <button class="btn btn-ghost" id="export-btn">${icon('download',14)} CSV</button>
   </div>`;
 
-  // hidden file input for per-item camera
-  html+=`<input id="item-photo-input" type="file" accept="image/*" capture="environment" style="display:none">`;
+  // Two hidden file inputs: one forces camera, one opens file picker (PDF/JPG/PNG)
+  html+=`<input id="item-photo-input-camera" type="file" accept="image/*" capture="environment" style="display:none">`;
+  html+=`<input id="item-photo-input-files" type="file" accept="image/*,.pdf" multiple style="display:none">`;
 
   // Item rows
   html+=`<div id="results-list">`;
@@ -533,8 +577,12 @@ function renderResults(){
             ${hasPhoto?`<span style="color:var(--green)">📷 ${photos.length}</span>`:''}
           </div>
         </div>
-        <button class="btn-camera" data-item-photo="${item.id}" title="Take photo">${icon('camera',20)}</button>
-      </div>`;
+        <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+          <button class="btn-camera" data-item-photo="${item.id}" data-use-camera="true" title="Take photo" ${photos.length>=10?'disabled style="opacity:.4"':''}>${icon('camera',18)}</button>
+          <button class="btn-camera" data-item-photo="${item.id}" data-use-camera="false" title="Attach file" style="background:#1e4d38;font-size:11px;padding:6px 10px" ${photos.length>=10?'disabled style="opacity:.4"':''}>📎</button>
+        </div>
+      </div>
+      ${photos.length>=10?`<div style="font-size:10px;color:var(--amber);padding:2px 14px 6px">Max 10 files reached</div>`:''}`;
 
     // Photo strip (always visible when photos exist)
     if(photos.length){
@@ -542,18 +590,24 @@ function renderResults(){
     }
 
     if(expanded){
+      const existingAlias=Object.entries(APP.posData?.aliases||{}).find(([,code])=>code===item.posCode);
       html+=`<div class="row-details"><div style="padding-top:10px;display:grid;gap:8px;font-size:12px">
-        <div><span style="color:var(--text3)">POS Match:</span> <span style="color:var(--text2)">${item.posName||'—'}</span></div>
+        <div><span style="color:var(--text3)">Idealpos Name:</span> <span style="color:var(--text2)">${item.posName||'—'}</span></div>
         <div><span style="color:var(--text3)">POS Code:</span> <span style="font-family:var(--font-mono);color:var(--green)">${item.posCode||'—'}</span></div>
-        <div><span style="color:var(--text3)">Confidence:</span> <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span></div>
-        <div style="display:flex;gap:8px;margin-top:4px">
+        <div><span style="color:var(--text3)">Match confidence:</span> <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span> <span style="color:var(--text3)">(${item.aliased?'alias':'fuzzy'}${item.learned?'/learned':''})</span></div>
+        ${item.posCode?`<div style="display:flex;gap:6px;align-items:center">
+          <input class="input" data-alias-input="${item.id}" placeholder="Physical label alias (e.g. 'Coke 2L')" value="${existingAlias?existingAlias[0]:''}" style="font-size:11px;padding:6px 8px;flex:1">
+          <button class="btn btn-ghost" data-save-alias="${item.id}" style="font-size:11px;padding:6px 10px;white-space:nowrap">Save alias</button>
+        </div>`:''}
+        <div style="display:flex;gap:8px;margin-top:2px">
           <button class="btn ${isDmg?'btn-danger':'btn-ghost'}" data-toggle-dmg="${item.id}" style="flex:1;font-size:12px">
             ${icon('flag',14)} ${isDmg?'Remove Flag':'Flag Damage'}
           </button>
-          ${item.confidence>=50&&item.confidence<95&&!item.learned?`<button class="btn" data-confirm-match="${item.id}" style="background:#2d6a4f22;border:1px solid var(--green-dark);color:var(--green);font-size:12px">${icon('check',14)} Confirm</button>`:''}
+          ${item.confidence>=50&&item.confidence<95&&!item.learned&&!item.aliased?`<button class="btn" data-confirm-match="${item.id}" style="background:#2d6a4f22;border:1px solid var(--green-dark);color:var(--green);font-size:12px">${icon('check',14)} Confirm</button>`:''}
         </div>
         ${isDmg?`<input class="input" data-dmg-note="${item.id}" placeholder="Damage description..." value="${item.damageNote||''}" style="font-size:12px;padding:8px 10px;border-color:#f4433644">`:''}
         ${item.status==='NEW ITEM'?`<input class="input" data-manual-note="${item.id}" placeholder="Manual POS code or notes..." value="${item.manualNotes||''}" style="font-size:12px;padding:8px 10px;font-family:var(--font-mono);border-color:#e5a10044">`:''}
+        ${photos.length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px">${photos.map((url,pi)=>`<button class="btn btn-ghost" data-rm-item-photo="${item.id}" data-photo-idx="${pi}" style="font-size:10px;padding:4px 8px;color:var(--red)">✕ Photo ${pi+1}</button>`).join('')}</div>`:''}
       </div></div>`;
     }
     html+=`</div>`;
@@ -776,7 +830,7 @@ function bindResults(){
     Object.values(APP.itemPhotoMap).flat().forEach(url=>URL.revokeObjectURL(url));
     APP.results=null;APP.viewingHistory=null;APP.reportFiles=[];APP.itemPhotos=[];
     APP.scannedBarcodes=[];APP.deliveryNotes='';APP.selectedSupplier='';
-    APP.issuesOnly=false;APP.expandedRows.clear();APP.itemPhotoMap={};APP.viewingPhoto=null;render();
+    APP.issuesOnly=false;APP.expandedRows.clear();APP.itemPhotoMap={};APP.viewingPhoto=null;APP.resultsSearch='';render();
   };
   const togIssues=$('#toggle-issues');
   if(togIssues)togIssues.onclick=()=>{APP.issuesOnly=!APP.issuesOnly;render()};
@@ -814,24 +868,65 @@ function bindResults(){
   document.querySelectorAll('[data-manual-note]').forEach(el=>{
     el.oninput=()=>{const id=el.dataset.manualNote;const items=APP.results||APP.viewingHistory?.items||[];const item=items.find(i=>i.id===id);if(item)item.manualNotes=el.value}
   });
-  // Per-item camera buttons — single shared file input
+  // Search bar
+  const srch=$('#results-search');
+  if(srch){srch.oninput=()=>{APP.resultsSearch=srch.value;render()};srch.focus&&srch.blur()}
+
+  // Per-item attachment — two inputs: camera (capture) and file picker
   let currentCameraItemId=null;
-  const itemPhotoInput=$('#item-photo-input');
-  if(itemPhotoInput){
-    itemPhotoInput.onchange=async e=>{
-      if(!e.target.files.length||!currentCameraItemId)return;
-      const files=Array.from(e.target.files);
-      if(!APP.itemPhotoMap[currentCameraItemId])APP.itemPhotoMap[currentCameraItemId]=[];
-      for(const f of files){
-        const url=URL.createObjectURL(f);
-        APP.itemPhotoMap[currentCameraItemId].push(url);
-      }
-      e.target.value='';
-      render();
-    };
-  }
+  const addPhotos=async(files,itemId)=>{
+    if(!itemId||!files.length)return;
+    if(!APP.itemPhotoMap[itemId])APP.itemPhotoMap[itemId]=[];
+    const slots=10-APP.itemPhotoMap[itemId].length;
+    const toAdd=Array.from(files).slice(0,slots);
+    for(const f of toAdd){APP.itemPhotoMap[itemId].push(URL.createObjectURL(f))}
+    render();
+  };
+  const camInput=$('#item-photo-input-camera');
+  const fileInput=$('#item-photo-input-files');
+  if(camInput){camInput.onchange=e=>{addPhotos(e.target.files,currentCameraItemId);e.target.value=''}}
+  if(fileInput){fileInput.onchange=e=>{addPhotos(e.target.files,currentCameraItemId);e.target.value=''}}
   document.querySelectorAll('[data-item-photo]').forEach(el=>{
-    el.onclick=e=>{e.stopPropagation();currentCameraItemId=el.dataset.itemPhoto;if(itemPhotoInput)itemPhotoInput.click()}
+    el.onclick=e=>{
+      e.stopPropagation();
+      currentCameraItemId=el.dataset.itemPhoto;
+      const useCamera=el.dataset.useCamera==='true';
+      if(useCamera&&camInput)camInput.click();
+      else if(fileInput)fileInput.click();
+    }
+  });
+  // Remove individual photo
+  document.querySelectorAll('[data-rm-item-photo]').forEach(el=>{
+    el.onclick=e=>{
+      e.stopPropagation();
+      const id=el.dataset.rmItemPhoto;const idx=+el.dataset.photoIdx;
+      const arr=APP.itemPhotoMap[id];if(!arr)return;
+      URL.revokeObjectURL(arr[idx]);arr.splice(idx,1);
+      if(!arr.length)delete APP.itemPhotoMap[id];
+      render();
+    }
+  });
+  // Save alias
+  document.querySelectorAll('[data-save-alias]').forEach(el=>{
+    el.onclick=e=>{
+      e.stopPropagation();
+      const id=el.dataset.saveAlias;
+      const inp=document.querySelector(`[data-alias-input="${id}"]`);
+      if(!inp||!APP.posData)return;
+      const label=inp.value.trim();
+      const allItems=APP.results||[];
+      const item=allItems.find(i=>i.id===id);
+      if(!item||!item.posCode)return;
+      if(!APP.posData.aliases)APP.posData.aliases={};
+      // Remove any old alias for this POS code
+      for(const k of Object.keys(APP.posData.aliases)){
+        if(APP.posData.aliases[k]===item.posCode)delete APP.posData.aliases[k];
+      }
+      if(label)APP.posData.aliases[normalize(label)]=item.posCode;
+      store.set('pos-data',APP.posData);
+      item.aliased=!!label;
+      render();
+    }
   });
   // Photo thumbnails → open modal
   document.querySelectorAll('[data-view-photo]').forEach(el=>{
@@ -986,6 +1081,7 @@ Include EVERY line item. No markdown fences, just the raw JSON array.`});
 
     APP.processStep='Matching POS stocklist...';render();
     const mappings=supProfile?.mappings||{};
+    const aliases=APP.posData?.aliases||{};
     const reconciled=items.map(item=>{
       // Barcode match first
       let bcMatch=null;
@@ -995,7 +1091,7 @@ Include EVERY line item. No markdown fences, just the raw JSON array.`});
           if(pm&&fuzzyScore(item.name,pm.description)>40){bcMatch=pm;break}
         }
       }
-      const posMatch=bcMatch?{code:bcMatch.code,name:bcMatch.description,confidence:99}:findBestPOSMatch(item.name,APP.posData?.items||[],mappings);
+      const posMatch=bcMatch?{code:bcMatch.code,name:bcMatch.description,confidence:99}:findBestPOSMatch(item.name,APP.posData?.items||[],mappings,aliases);
       const isNew=posMatch.confidence<70;
       const status=isNew?'NEW ITEM':'Matched';
       return{id:uid(),name:item.name,qtyExpected:item.qtyExpected||0,
