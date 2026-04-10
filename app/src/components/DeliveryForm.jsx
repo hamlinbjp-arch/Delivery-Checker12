@@ -1,9 +1,10 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 import { callClaude } from '../lib/claude';
 import { findBestPOSMatch, fuzzyScore } from '../lib/fuzzy';
 import { resizeImage, fileToBase64 } from '../lib/imageUtils';
+import { detectSupplierFromPDF } from '../lib/pdfParser';
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -84,19 +85,44 @@ Include EVERY line item.` });
 export default function DeliveryForm() {
   const state = useStore();
   const { suppliers, selectedSupplier, deliveryNotes, reportFiles, itemPhotos, scannedBarcodes, processing, processStep, apiKey, posData, set } = state;
-  const reportRef = useRef();
+  const pdfRef = useRef();
+  const imgRef = useRef();
   const photoCamRef = useRef();
   const photoFileRef = useRef();
   const bcRef = useRef();
+  const [detecting, setDetecting] = useState(false);
 
   const addBc = () => { const v = bcRef.current?.value?.trim(); if (v && !scannedBarcodes.includes(v)) { set({ scannedBarcodes: [...scannedBarcodes, v] }); bcRef.current.value = ''; } };
+
+  const handlePDFUpload = async (files) => {
+    const arr = Array.from(files);
+    set({ reportFiles: [...reportFiles, ...arr] });
+    pdfRef.current.value = '';
+    // Auto-detect supplier from the PDF if none selected
+    if (!selectedSupplier) {
+      const knownNames = suppliers.length
+        ? suppliers.map(s => s.name)
+        : [...new Set((posData?.items || []).map(p => p.supplier).filter(Boolean))];
+      if (knownNames.length) {
+        const pdfFile = arr.find(f => f.type.includes('pdf') || f.name.toLowerCase().endsWith('.pdf'));
+        if (pdfFile) {
+          setDetecting(true);
+          const detected = await detectSupplierFromPDF(pdfFile, knownNames);
+          setDetecting(false);
+          if (detected) set({ selectedSupplier: detected });
+        }
+      }
+    }
+  };
 
   return (
     <div style={{ paddingTop: 16 }}>
       <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: 8 }}><Icon name="truck" size={20} /> New Delivery</h2>
 
       <div style={{ marginBottom: 14 }}>
-        <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>Supplier</label>
+        <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>
+          Supplier {detecting && <span style={{ color: 'var(--amber)', fontWeight: 400 }}>· scanning PDF...</span>}
+        </label>
         {suppliers.length ? (
           <select className="input" style={{ appearance: 'auto' }} value={selectedSupplier}
             onChange={e => set({ selectedSupplier: e.target.value })}>
@@ -115,14 +141,17 @@ export default function DeliveryForm() {
           value={deliveryNotes} onChange={e => set({ deliveryNotes: e.target.value })} />
       </div>
 
-      {/* Report upload */}
+      {/* Report upload — separate PDF and photo buttons */}
       <div className="card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}><Icon name="file" size={16} /><span style={{ fontSize: 13, fontWeight: 600 }}>Delivery Report / Invoice</span></div>
-        <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px' }}>PDF or photo of the supplier's delivery docket</p>
-        <input ref={reportRef} type="file" accept="application/pdf,image/*" multiple style={{ display: 'none' }}
+        <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px' }}>PDF invoice or photo of the delivery docket</p>
+        <input ref={pdfRef} type="file" accept="application/pdf" multiple style={{ display: 'none' }}
+          onChange={e => { handlePDFUpload(e.target.files); }} />
+        <input ref={imgRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
           onChange={e => { set({ reportFiles: [...reportFiles, ...Array.from(e.target.files)] }); e.target.value = ''; }} />
         <div className="upload-zone">
-          <button className="upload-add" onClick={() => reportRef.current?.click()}><Icon name="plus" size={14} /> Add</button>
+          <button className="upload-add" onClick={() => pdfRef.current?.click()}>📄 Upload PDF</button>
+          <button className="upload-add" onClick={() => imgRef.current?.click()}>📷 Photo</button>
           {reportFiles.map((f, i) => (
             <div key={i} className="upload-file">
               <span>{f.name}</span>
