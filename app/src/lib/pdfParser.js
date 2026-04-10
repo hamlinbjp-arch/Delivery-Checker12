@@ -1,10 +1,44 @@
+import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
 let pdfjsLib = null;
 
 async function getPdfJs() {
   if (pdfjsLib) return pdfjsLib;
   pdfjsLib = await import('pdfjs-dist');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
   return pdfjsLib;
+}
+
+// Scan the first 2 pages of a delivery PDF and return the best-matching supplier name,
+// or null if none found. supplierNames: string[] of known names to match against.
+export async function detectSupplierFromPDF(file, supplierNames) {
+  if (!supplierNames?.length) return null;
+  try {
+    const lib = await getPdfJs();
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+    const pages = Math.min(pdf.numPages, 2);
+    for (let i = 1; i <= pages; i++) {
+      const page = await pdf.getPage(i);
+      const tc = await page.getTextContent();
+      fullText += tc.items.map(item => item.str).join(' ') + '\n';
+    }
+    const normText = fullText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ');
+    // 1. Direct substring match (fastest)
+    for (const s of supplierNames) {
+      const norm = s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (norm && normText.includes(norm)) return s;
+    }
+    // 2. All significant tokens of the supplier name appear in the text
+    for (const s of supplierNames) {
+      const tokens = s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(t => t.length > 2);
+      if (tokens.length > 0 && tokens.every(t => normText.includes(t))) return s;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export async function parsePOSPdf(file, onProgress) {
