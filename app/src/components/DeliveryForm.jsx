@@ -119,7 +119,7 @@ export default function DeliveryForm() {
       <div className="card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}><Icon name="file" size={16} /><span style={{ fontSize: 13, fontWeight: 600 }}>Delivery Report / Invoice</span></div>
         <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px' }}>PDF or photo of the supplier's delivery docket</p>
-        <input ref={reportRef} type="file" accept="image/*,.pdf" multiple style={{ display: 'none' }}
+        <input ref={reportRef} type="file" accept="application/pdf,image/*" multiple style={{ display: 'none' }}
           onChange={e => { set({ reportFiles: [...reportFiles, ...Array.from(e.target.files)] }); e.target.value = ''; }} />
         <div className="upload-zone">
           <button className="upload-add" onClick={() => reportRef.current?.click()}><Icon name="plus" size={14} /> Add</button>
