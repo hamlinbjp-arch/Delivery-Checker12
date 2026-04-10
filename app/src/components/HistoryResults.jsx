@@ -72,6 +72,10 @@ export default function HistoryResults() {
                 <div style={{ paddingTop: 10, display: 'grid', gap: 6, fontSize: 12 }}>
                   <div><span style={{ color: 'var(--text3)' }}>Idealpos:</span> {item.posName || '—'} <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>{item.posCode ? `(${item.posCode})` : ''}</span></div>
                   <div><span style={{ color: 'var(--text3)' }}>Match:</span> <span style={{ color: confColor, fontWeight: 600 }}>{pct(item.confidence)}</span> <span style={{ color: 'var(--text3)', fontSize: 10 }}>{item.aliased ? 'via alias' : item.learned ? 'learned' : 'fuzzy'}</span></div>
+                  {item.supplierCode && <div><span style={{ color: 'var(--text3)' }}>Supplier Code:</span> <span style={{ fontFamily: 'var(--font-mono)' }}>{item.supplierCode}</span></div>}
+                  {item.qtyReceived !== undefined && item.qtyReceived !== item.qtyExpected && (
+                    <div style={{ color: 'var(--amber)' }}>Received: {item.qtyReceived} / {item.qtyExpected} expected</div>
+                  )}
                   {item.damageNote && <div style={{ color: 'var(--red)' }}>Damage: {item.damageNote}</div>}
                   {item.manualNotes && <div style={{ color: 'var(--text2)' }}>Notes: {item.manualNotes}</div>}
                 </div>

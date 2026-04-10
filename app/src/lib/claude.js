@@ -13,7 +13,14 @@ export async function callClaude(apiKey, messages, systemPrompt, maxTokens = 800
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: maxTokens, system: systemPrompt, messages }),
       signal: controller.signal,
     });
-    if (!resp.ok) { const e = await resp.text(); throw new Error(`API ${resp.status}: ${e}`); }
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      if (resp.status === 401) throw new Error('API key invalid or expired. Check Settings.');
+      if (resp.status === 429) throw new Error('Rate limit reached. Wait a moment and try again.');
+      if (resp.status === 529) throw new Error('Claude is overloaded. Try again in a few seconds.');
+      if (resp.status === 413) throw new Error('Request too large. Try fewer/smaller photos.');
+      throw new Error(`API error ${resp.status}: ${body.slice(0, 200)}`);
+    }
     return resp.json();
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('Request timed out after 90s');

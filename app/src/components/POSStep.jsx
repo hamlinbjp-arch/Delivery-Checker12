@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 import { fuzzyScore } from '../lib/fuzzy';
@@ -17,8 +17,11 @@ function ItemRow({ item }) {
   const confColor = item.confidence >= 80 ? 'var(--green)' : item.confidence >= 45 ? 'var(--amber)' : 'var(--red)';
   let rowCls = item.confidence >= 80 || item.learned ? 'row-green' : item.confidence >= 45 ? 'row-yellow' : 'row-red';
   if (isDmg) rowCls = 'damaged';
-  const existingAlias = Object.entries(posData?.aliases || {}).find(([, code]) => code === item.posCode);
-  const [aliasVal, setAliasVal] = useState(existingAlias ? existingAlias[0] : '');
+  const [aliasVal, setAliasVal] = useState('');
+  useEffect(() => {
+    const existing = Object.entries(posData?.aliases || {}).find(([, code]) => code === item.posCode);
+    setAliasVal(existing ? existing[0] : '');
+  }, [posData, item.posCode]);
 
   const meta = [];
   if (item.supplierCode) meta.push(<span key="ref" style={{ color: 'var(--text3)' }}>Ref:{item.supplierCode}</span>);
@@ -81,6 +84,17 @@ function ItemRow({ item }) {
           <div style={{ paddingTop: 10, display: 'grid', gap: 8, fontSize: 12 }}>
             <div><span style={{ color: 'var(--text3)' }}>Idealpos:</span> {item.posName || '—'} <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>{item.posCode ? `(${item.posCode})` : ''}</span></div>
             <div><span style={{ color: 'var(--text3)' }}>Match:</span> <span style={{ color: confColor, fontWeight: 600 }}>{pct(item.confidence)}</span> <span style={{ color: 'var(--text3)', fontSize: 10 }}>{item.aliased ? 'via alias' : item.learned ? 'learned' : 'fuzzy'}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+              <span style={{ color: 'var(--text3)' }}>Qty Received:</span>
+              <button className="btn btn-ghost" style={{ padding: '3px 10px', fontSize: 14 }}
+                onClick={() => updateResultItem(item.id, { qtyReceived: Math.max(0, (item.qtyReceived ?? item.qtyExpected) - 1) })}>−</button>
+              <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
+                {item.qtyReceived ?? item.qtyExpected}
+              </span>
+              <button className="btn btn-ghost" style={{ padding: '3px 10px', fontSize: 14 }}
+                onClick={() => updateResultItem(item.id, { qtyReceived: (item.qtyReceived ?? item.qtyExpected) + 1 })}>+</button>
+              <span style={{ color: 'var(--text3)' }}>/ {item.qtyExpected} expected</span>
+            </div>
             {item.posCode && (
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <input className="input" placeholder="Save alias (e.g. 'Coke 2L')" value={aliasVal}

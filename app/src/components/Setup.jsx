@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 import { parsePOSPdf } from '../lib/pdfParser';
+import { store as ls } from '../lib/storage';
 
 export default function Setup() {
   const { apiKey, saveApiKey, savePosData, set } = useStore();
@@ -12,7 +13,7 @@ export default function Setup() {
   const handlePdf = async (file) => {
     setProcessing(true); setStep('Loading PDF...');
     try {
-      const items = await parsePOSPdf(file, s => setStep(s));
+      const { items } = await parsePOSPdf(file, s => setStep(s));
       savePosData({ items, aliases: {}, updatedAt: new Date().toISOString() });
     } catch (err) {
       alert('Error parsing POS PDF: ' + err.message);
@@ -46,7 +47,7 @@ export default function Setup() {
             {processing ? <><span className="spinner">⟳</span> {step}</> : <><Icon name="upload" size={18} /> Upload POS PDF</>}
           </button>
           <button className="btn" style={{ width: '100%', marginTop: 12, padding: 12, background: 'none', border: '1px solid var(--border)', color: 'var(--text3)' }}
-            onClick={() => { localStorage.setItem('dc-skip-pos', 'true'); set({ posData: { items: [], aliases: {}, updatedAt: new Date().toISOString() } }); }}>
+            onClick={() => { ls.set('skip-pos', true); set({ posData: { items: [], aliases: {}, updatedAt: new Date().toISOString() } }); }}>
             Skip for now
           </button>
         </div>

@@ -25,6 +25,10 @@ export const useStore = create((set, get) => ({
   processing: false,
   processStep: '',
 
+  // ── Storage error ───────────────────────────────────────────────
+  storageError: null,
+  clearStorageError() { set({ storageError: null }); },
+
   // ── Session: UI state ───────────────────────────────────────────
   issuesOnly: false,
   showPOSEntry: false,
@@ -42,20 +46,20 @@ export const useStore = create((set, get) => ({
 
   // ── Persisted setters ───────────────────────────────────────────
   saveApiKey(key) {
-    ls.set('api-key', key);
+    if (ls.set('api-key', key) === 'quota') set({ storageError: 'quota' });
     set({ apiKey: key });
   },
   savePosData(data) {
-    ls.set('pos-data', data);
+    if (ls.set('pos-data', data) === 'quota') set({ storageError: 'quota' });
     ls.set('skip-pos', true);
     set({ posData: data });
   },
   saveSuppliers(suppliers) {
-    ls.set('suppliers', suppliers);
+    if (ls.set('suppliers', suppliers) === 'quota') set({ storageError: 'quota' });
     set({ suppliers });
   },
   saveHistory(history) {
-    ls.set('history', history);
+    if (ls.set('history', history) === 'quota') set({ storageError: 'quota' });
     set({ history });
   },
   clearPosData() {
@@ -121,7 +125,7 @@ export const useStore = create((set, get) => ({
       if (posData.aliases[k] === item.posCode) delete posData.aliases[k];
     }
     if (label) posData.aliases[label.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim()] = item.posCode;
-    ls.set('pos-data', posData);
+    if (ls.set('pos-data', posData) === 'quota') set({ storageError: 'quota' });
     set({ posData });
     get().updateResultItem(itemId, { aliased: !!label });
   },
@@ -137,20 +141,20 @@ export const useStore = create((set, get) => ({
       mappings[item.name.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim()] = item.posCode;
       return { ...s, mappings };
     });
-    ls.set('suppliers', suppliers);
+    if (ls.set('suppliers', suppliers) === 'quota') set({ storageError: 'quota' });
     set({ suppliers });
     get().updateResultItem(itemId, { learned: true });
   },
 
   // ── History helpers ─────────────────────────────────────────────
   addHistoryRecord(record) {
-    const history = [record, ...get().history];
-    ls.set('history', history);
+    const history = [record, ...get().history].slice(0, 100);
+    if (ls.set('history', history) === 'quota') set({ storageError: 'quota' });
     set({ history });
   },
   deleteHistoryRecord(id) {
     const history = get().history.filter(h => h.id !== id);
-    ls.set('history', history);
+    if (ls.set('history', history) === 'quota') set({ storageError: 'quota' });
     set({ history });
   },
   clearHistory() {

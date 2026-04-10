@@ -11,6 +11,7 @@ const TABS = [
 export default function Nav() {
   const page = useStore(s => s.page);
   const set = useStore(s => s.set);
+  const hasActiveDelivery = useStore(s => s.results !== null || s.deliveryStep !== 'form');
   return (
     <div className="nav">
       {TABS.map(t => (
@@ -19,6 +20,9 @@ export default function Nav() {
           className={`nav-btn${page === t.id ? ' active' : ''}`}
           onClick={() => set({ page: t.id, viewingHistory: null })}
         >
+          {t.id === 'delivery' && hasActiveDelivery && (
+            <span style={{ position: 'absolute', top: 6, right: '22%', width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', border: '2px solid var(--bg2)' }} />
+          )}
           <Icon name={t.icon} size={22} />
           <span style={{ fontWeight: page === t.id ? 700 : 400 }}>{t.label}</span>
         </button>

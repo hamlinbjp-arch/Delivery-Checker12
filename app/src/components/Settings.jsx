@@ -11,13 +11,14 @@ export default function Settings() {
   const [showKey, setShowKey] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [step, setStep] = useState('');
+  const [pendingAction, setPendingAction] = useState(null);
 
   const handlePdf = async (file) => {
     setProcessing(true); setStep('Loading PDF...');
     try {
-      const items = await parsePOSPdf(file, s => setStep(s));
+      const { items, supplierCount } = await parsePOSPdf(file, s => setStep(s));
       savePosData({ items, aliases: posData?.aliases || {}, updatedAt: new Date().toISOString() });
-      alert(`Loaded ${items.length} items.`);
+      alert(`Loaded ${items.length} items from ${supplierCount} supplier${supplierCount !== 1 ? 's' : ''}.`);
     } catch (err) {
       alert('Error: ' + err.message);
     } finally { setProcessing(false); setStep(''); }
@@ -54,8 +55,19 @@ export default function Settings() {
               <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={processing} onClick={() => document.getElementById('set-pos-file').click()}>
                 {processing ? <><span className="spinner">⟳</span> {step}</> : 'Re-upload PDF'}
               </button>
-              <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => { if (confirm('Clear POS data?')) clearPosData(); }}>Clear</button>
+              <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => setPendingAction(pendingAction === 'pos' ? null : 'pos')}>Clear</button>
             </div>
+            {pendingAction === 'pos' && (
+              <div style={{ marginTop: 8, padding: '8px 10px', background: '#f4433612', border: '1px solid #f4433630', borderRadius: 6, fontSize: 12 }}>
+                <div style={{ marginBottom: 8, color: 'var(--red)' }}>Clear POS stocklist data?</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-danger" style={{ fontSize: 11, padding: '5px 12px' }}
+                    onClick={() => { clearPosData(); setPendingAction(null); }}>Yes, clear</button>
+                  <button className="btn btn-ghost" style={{ fontSize: 11, padding: '5px 12px' }}
+                    onClick={() => setPendingAction(null)}>Cancel</button>
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -70,7 +82,18 @@ export default function Settings() {
 
       <div className="card">
         <div className="card-label">Data Management</div>
-        <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => { if (confirm('Clear ALL history?')) clearHistory(); }}>Clear All History</button>
+        <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => setPendingAction(pendingAction === 'history' ? null : 'history')}>Clear All History</button>
+        {pendingAction === 'history' && (
+          <div style={{ marginTop: 8, padding: '8px 10px', background: '#f4433612', border: '1px solid #f4433630', borderRadius: 6, fontSize: 12 }}>
+            <div style={{ marginBottom: 8, color: 'var(--red)' }}>Delete all delivery history permanently?</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-danger" style={{ fontSize: 11, padding: '5px 12px' }}
+                onClick={() => { clearHistory(); setPendingAction(null); }}>Yes, clear all</button>
+              <button className="btn btn-ghost" style={{ fontSize: 11, padding: '5px 12px' }}
+                onClick={() => setPendingAction(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
