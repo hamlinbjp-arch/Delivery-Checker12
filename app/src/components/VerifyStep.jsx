@@ -19,8 +19,8 @@ async function analyzePhotoItems(photoIdx, set, get) {
     const b64 = await resizeImage(file);
     const data = await callClaude(state.apiKey, [{ role: 'user', content: [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
-      { type: 'text', text: `Delivery items list:\n${itemList}\n\nCheck this photo for those items. For each item say if it is visible.\nOutput ONLY a raw JSON array, no markdown, no explanation outside JSON:\n[{"name":"item name","visible":true,"confidence":80,"reason":"why certain or uncertain"},...]` },
-    ] }], 'Output only a raw JSON array. No markdown fences, no text outside the JSON.', 6000);
+      { type: 'text', text: `Delivery items list:\n${itemList}\n\nLook carefully at this photo of delivered stock. Read ALL text visible on packaging — brand names, product names, and model names printed on boxes, labels, and wrappers. Look for brands like Satisfyer, Share Satisfaction, Wet Stuff, System JO, and similar adult product brands. Use packaging color and shape as additional clues (e.g. bright pink/purple boxes are often Satisfyer; blue/white squeeze bottles are often Wet Stuff).\n\nFor EVERY item in the list, determine if it is likely visible. If you see a product but are unsure of the exact match, provide your best guess from the list — do NOT say "not visible" just because you are uncertain. Only mark visible:false if the item is clearly absent from the photo.\n\nOutput ONLY a raw JSON array, no markdown, no explanation outside JSON:\n[{"name":"item name from list","visible":true,"confidence":80,"reason":"text/brand/color seen on packaging"},...]` },
+    ] }], 'You are a stock identification assistant. Study packaging text and branding carefully. Always provide your best guess from the provided list — never refuse to identify a product if anything is visible. Output only a raw JSON array with no markdown fences and no text outside the JSON.', 6000);
     const raw = data.content.map(c => c.text || '').join('');
     const stripped = raw.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
     const s = stripped.indexOf('['), e = stripped.lastIndexOf(']');

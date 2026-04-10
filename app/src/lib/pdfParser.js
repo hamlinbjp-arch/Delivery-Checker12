@@ -1,11 +1,9 @@
-// Disable PDF.js worker — needed for hosted PWA to avoid cross-origin worker issues
-// when loading from non-HTTPS or GitHub Pages sub-paths
 let pdfjsLib = null;
 
 async function getPdfJs() {
   if (pdfjsLib) return pdfjsLib;
   pdfjsLib = await import('pdfjs-dist');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
   return pdfjsLib;
 }
 
@@ -14,7 +12,7 @@ export async function parsePOSPdf(file, onProgress) {
   let arrayBuffer;
   try { arrayBuffer = await file.arrayBuffer(); } catch (e) { throw new Error('Reading file failed: ' + e.message); }
   let pdf;
-  try { pdf = await lib.getDocument({ data: arrayBuffer, disableWorker: true }).promise; } catch (e) { throw new Error('PDF load failed: ' + e.message); }
+  try { pdf = await lib.getDocument({ data: arrayBuffer }).promise; } catch (e) { throw new Error('PDF load failed: ' + e.message); }
 
   const totalPages = pdf.numPages;
   const allItems = [];
