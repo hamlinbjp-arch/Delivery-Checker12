@@ -6,59 +6,69 @@ import { resizeImage } from '../lib/imageUtils';
 import { fuzzyScore } from '../lib/fuzzy';
 import PhotoModal from './PhotoModal';
 
+const MAX_ITEMS_PER_ANALYSIS = 30;
+
 function getRemainingItems(results, itemPhotoMap) {
   return (results || []).filter(i => !(itemPhotoMap[i.id] || []).length);
 }
 
-const SYSTEM_PROMPT = `You are a strict stock verification assistant for delivery checking.
+const SYSTEM_PROMPT = `You are a strict stock verification assistant.
 
 ABSOLUTE RULES — violating these is worse than saying nothing:
-1. FOREGROUND ONLY: Identify ONLY items physically placed in the immediate foreground (on the counter/table surface directly in front of you). Do NOT identify anything visible through glass panels, cabinet doors, reflections in glass, background shelves, or items stored away in display cabinets. If in doubt about whether something is foreground, exclude it.
-2. READ THE PACKAGING: Only identify an item if you can clearly read its brand name, product name, or barcode from the packaging in this photo.
-3. NO GUESSING: If you cannot read the packaging clearly, or your confidence is below 85%, you MUST return the name as exactly the string "UNIDENTIFIED" and describe what you physically see in the reason field.
-4. NO HALLUCINATION: Never invent or assume a product name you cannot directly read. It is better to return "UNIDENTIFIED" than to guess incorrectly.
-5. COUNT PHYSICAL UNITS: Count each distinct physical box/package as one unit. Never count a reflection as a unit.
+1. FOREGROUND ONLY: Identify ONLY items physically on the counter/table in the immediate foreground. Never identify items visible through glass cabinets, reflections, or background shelves.
+2. READ THE PACKAGING: Only name an item if you can directly read its brand/product name from the packaging in the photo.
+3. NO GUESSING: If packaging text is unclear or confidence is below 85%, use exactly the string "UNIDENTIFIED" as the name and describe what you see in the reason field.
+4. COUNT PHYSICAL UNITS: Count distinct boxes/packages. Never count reflections.
+5. BOUNDING BOX: Estimate each item's position as a percentage of the image (x=left%, y=top%, w=width%, h=height%).
 
-Output only a raw JSON array. No markdown fences. No text outside the JSON.`;
+Output ONLY a raw JSON array. No markdown. No text outside the JSON.`;
 
-async function analyzePhotoItems(photoIdx, set, get) {
+async function analyzePhotoItems(photoIdx, set, get, { autoOpen = true } = {}) {
   const state = get();
   const file = state.itemPhotos[photoIdx];
   if (!file) return;
   const blobUrl = URL.createObjectURL(file);
 
-  const remainingItems = getRemainingItems(state.results, state.itemPhotoMap);
-  set({ photoAnalysisModal: { photoIdx, blobUrl, analyzing: true, results: null, remainingItems } });
+  const allRemaining = getRemainingItems(state.results, state.itemPhotoMap);
+  // Limit to first MAX_ITEMS_PER_ANALYSIS to keep prompt fast
+  const remainingItems = allRemaining.slice(0, MAX_ITEMS_PER_ANALYSIS);
+  const hiddenCount = allRemaining.length - remainingItems.length;
 
-  if (!remainingItems.length) {
-    set({ photoAnalysisModal: { photoIdx, blobUrl, analyzing: false, results: [], remainingItems, allDone: true } });
+  if (autoOpen) {
+    set({ photoAnalysisModal: { photoIdx, blobUrl, analyzing: true, results: null, remainingItems, allRemaining } });
+  }
+
+  if (!allRemaining.length) {
+    set({ photoAnalysisModal: { photoIdx, blobUrl, analyzing: false, results: [], remainingItems: [], allRemaining: [], allDone: true } });
     return;
   }
 
   try {
     const itemList = remainingItems
-      .map((it, i) => `${i + 1}. ${it.name} (expected ×${it.qtyExpected || 1})`)
+      .map((it, i) => `${i + 1}. ${it.name} ×${it.qtyExpected || 1}`)
       .join('\n');
+    const suffix = hiddenCount > 0 ? `\n(${hiddenCount} more items not shown — analyze another photo for them)` : '';
 
-    const b64 = await resizeImage(file);
+    // Use 1200px for speed — still enough to read packaging text
+    const b64 = await resizeImage(file, 1200, 0.80);
     const data = await callClaude(state.apiKey, [{ role: 'user', content: [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
-      { type: 'text', text: `Items still to find in this delivery (foreground only):\n${itemList}\n\nInspect the FOREGROUND of this photo only. Ignore anything through glass, in cabinets, or on background shelves.\n\nFor each distinct item you physically see in the foreground:\n- If you can read the packaging text clearly and match it to an item above with ≥85% certainty: use the exact name from the list\n- If you cannot read it clearly, or are unsure: use exactly the string "UNIDENTIFIED"\n\nCount each distinct physical unit. Do not count reflections or the same item twice.\n\n[{"name":"item name from list OR UNIDENTIFIED","visible":true,"foundCount":2,"expectedCount":3,"confidence":92,"reason":"exact text read from packaging"},...]` },
-    ] }], SYSTEM_PROMPT, 6000);
+      { type: 'text', text: `Delivery items to find in this photo's foreground:\n${itemList}${suffix}\n\nForeground only — ignore anything through glass, in cabinets, or on background shelves.\n\nFor each distinct foreground item: match to list if ≥85% certain, otherwise use "UNIDENTIFIED". Include a bounding box.\n\n[{"name":"item name OR UNIDENTIFIED","visible":true,"foundCount":1,"expectedCount":1,"confidence":92,"reason":"exact text read from packaging","bbox":{"x":10,"y":20,"w":30,"h":25}},...]` },
+    ] }], SYSTEM_PROMPT, 2000);
 
     const raw = data.content.map(c => c.text || '').join('');
     const stripped = raw.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
     const s = stripped.indexOf('['), e = stripped.lastIndexOf(']');
     let results;
     try { results = s >= 0 && e > s ? JSON.parse(stripped.slice(s, e + 1)) : JSON.parse(stripped); }
-    catch (pe) { throw new Error(`Parse failed: ${stripped.slice(0, 200)}`); }
+    catch { throw new Error(`Parse failed: ${stripped.slice(0, 150)}`); }
 
-    // Re-read state to avoid race with concurrent user edits
+    // Re-read current state to avoid race with user edits
     const current = get();
     const map = { ...current.itemPhotoMap };
     const stillRemaining = getRemainingItems(current.results, map);
 
-    // Auto-assign only at ≥90% confidence and not UNIDENTIFIED
+    // Auto-assign only ≥90% confident, non-UNIDENTIFIED items
     for (const r of results) {
       if (!r.visible || r.name === 'UNIDENTIFIED' || r.confidence < 90) continue;
       const match = stillRemaining.find(i => fuzzyScore(r.name, i.name) >= 70);
@@ -69,10 +79,202 @@ async function analyzePhotoItems(photoIdx, set, get) {
     }
 
     const bulkPhotoResults = { ...get().bulkPhotoResults, [photoIdx]: results };
-    set({ bulkPhotoResults, itemPhotoMap: map, photoAnalysisModal: { photoIdx, blobUrl, analyzing: false, results, remainingItems } });
+    set({ bulkPhotoResults, itemPhotoMap: map });
+    if (autoOpen || get().photoAnalysisModal?.photoIdx === photoIdx) {
+      set({ photoAnalysisModal: { photoIdx, blobUrl, analyzing: false, results, remainingItems, allRemaining, hiddenCount } });
+    }
   } catch (err) {
-    set({ photoAnalysisModal: { ...get().photoAnalysisModal, analyzing: false, results: [{ name: 'Analysis failed', visible: false, confidence: 0, reason: err.message }] } });
+    if (autoOpen || get().photoAnalysisModal?.photoIdx === photoIdx) {
+      set({ photoAnalysisModal: { ...get().photoAnalysisModal, analyzing: false, results: [{ name: 'Analysis failed', visible: false, confidence: 0, reason: err.message }] } });
+    }
   }
+}
+
+// Searchable picker used inside the analysis modal
+function ItemPicker({ searchHint, remainingItems, onSelect, onDismiss }) {
+  const [q, setQ] = useState(searchHint || '');
+  const rows = [...remainingItems]
+    .map(item => ({ item, score: q ? fuzzyScore(q, item.name) : 100 }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+
+  return (
+    <div style={{ background: 'var(--bg)', border: '1px solid var(--amber)', borderRadius: 10, marginTop: 4, overflow: 'hidden' }}>
+      <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>
+        <input className="input" placeholder="Search items..." value={q} onChange={e => setQ(e.target.value)}
+          style={{ fontSize: 12, padding: '6px 10px' }} autoFocus />
+      </div>
+      <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+        {rows.map(({ item, score }) => (
+          <div key={item.id} onClick={() => onSelect(item)}
+            style={{ padding: '9px 12px', borderBottom: '1px solid #2f333622', fontSize: 12, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+            <span style={{ color: 'var(--text3)', flexShrink: 0, fontSize: 10 }}>×{item.qtyExpected}{q ? ` · ${score}%` : ''}</span>
+          </div>
+        ))}
+        {!rows.length && <div style={{ padding: 12, color: 'var(--text3)', fontSize: 12 }}>No matches.</div>}
+      </div>
+      <button onClick={onDismiss} style={{ width: '100%', padding: '8px 12px', background: 'none', border: 'none', borderTop: '1px solid var(--border)', color: 'var(--text3)', fontSize: 12, cursor: 'pointer', textAlign: 'left' }}>
+        ✕ Not a delivery item — skip
+      </button>
+    </div>
+  );
+}
+
+function AnalysisModal() {
+  const { photoAnalysisModal, results: allResults, set } = useStore();
+  const [openPicker, setOpenPicker] = useState(null);
+
+  if (!photoAnalysisModal) return null;
+  const { blobUrl, analyzing, results: ar, remainingItems = [], allRemaining = [], allDone, hiddenCount = 0 } = photoAnalysisModal;
+
+  const handleAssign = (targetItem) => {
+    const map = { ...useStore.getState().itemPhotoMap };
+    if (!map[targetItem.id]) map[targetItem.id] = [];
+    map[targetItem.id].push(blobUrl);
+    set({ itemPhotoMap: map, photoAnalysisModal: null });
+  };
+
+  const visibleItems = (ar || []).filter(r => r.visible);
+  const autoOk = visibleItems.filter(r => r.name !== 'UNIDENTIFIED' && r.confidence >= 90);
+  const needsReview = visibleItems.filter(r => r.name === 'UNIDENTIFIED' || r.confidence < 90);
+
+  return (
+    <div className="analysis-modal" onClick={e => { if (e.target === e.currentTarget) set({ photoAnalysisModal: null }); }}>
+      <button className="photo-modal-close" style={{ position: 'fixed' }} onClick={() => set({ photoAnalysisModal: null })}>✕</button>
+      <div className="analysis-modal-inner">
+
+        {/* Photo with bounding box overlay */}
+        <div style={{ position: 'relative', width: '100%', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
+          <img src={blobUrl} alt="" style={{ width: '100%', display: 'block', maxHeight: 260, objectFit: 'contain' }} />
+
+          {analyzing && (
+            <div style={{ position: 'absolute', inset: 0, background: '#000000bb', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <span className="spinner" style={{ fontSize: 28, color: '#fff' }}>⟳</span>
+              <div style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>Reading packaging text...</div>
+              <div style={{ color: '#ffffff88', fontSize: 11 }}>Foreground only · ignoring glass/background</div>
+            </div>
+          )}
+
+          {/* Bounding boxes */}
+          {!analyzing && visibleItems.map((r, i) => {
+            if (!r.bbox) return null;
+            const uncertain = r.name === 'UNIDENTIFIED' || r.confidence < 90;
+            const color = uncertain ? '#e5a100' : '#52b788';
+            const pk = `bbox-${i}`;
+            return (
+              <div key={i} onClick={() => setOpenPicker(openPicker === pk ? null : pk)}
+                style={{
+                  position: 'absolute',
+                  left: `${Math.max(0, r.bbox.x)}%`, top: `${Math.max(0, r.bbox.y)}%`,
+                  width: `${Math.min(r.bbox.w, 100 - r.bbox.x)}%`, height: `${Math.min(r.bbox.h, 100 - r.bbox.y)}%`,
+                  border: `2px solid ${color}`,
+                  borderRadius: 4, cursor: uncertain ? 'pointer' : 'default',
+                  boxSizing: 'border-box',
+                }}>
+                <div style={{ position: 'absolute', top: 0, left: 0, background: color, color: '#000', fontSize: 10, fontWeight: 800, padding: '1px 5px', lineHeight: 1.6, borderRadius: '0 0 4px 0', whiteSpace: 'nowrap' }}>
+                  {i + 1}{uncertain ? ' ❓' : ' ✓'}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {analyzing && (
+          <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>
+            Checking {remainingItems.length} of {allRemaining.length} remaining items
+            {hiddenCount > 0 && ` · ${hiddenCount} items in next photo`}
+          </div>
+        )}
+
+        {allDone && (
+          <div style={{ padding: 16, textAlign: 'center', color: 'var(--green)' }}>
+            <div style={{ fontSize: 22 }}>✅</div>
+            <div style={{ fontSize: 13, marginTop: 8 }}>All items already confirmed!</div>
+          </div>
+        )}
+
+        {ar && !allDone && (
+          <div style={{ width: '100%' }}>
+            <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center', marginBottom: 8 }}>
+              {allRemaining.length} remaining · showing first {remainingItems.length}
+              {hiddenCount > 0 && <span style={{ color: 'var(--amber)' }}> · upload another photo for {hiddenCount} more</span>}
+            </div>
+
+            {/* Auto-confirmed */}
+            {autoOk.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', marginBottom: 4, letterSpacing: '.5px' }}>✅ AUTO-CONFIRMED ({autoOk.length})</div>
+                {autoOk.map((r, i) => {
+                  const idx = visibleItems.indexOf(r);
+                  const qtyOk = !r.foundCount || !r.expectedCount || r.foundCount >= r.expectedCount;
+                  return (
+                    <div key={i} className="analysis-result-row" style={{ background: '#52b78815', marginBottom: 4 }}>
+                      <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 800, color: 'var(--green)', minWidth: 18 }}>{idx + 1}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, color: 'var(--green)', fontSize: 13 }}>
+                          {r.name}
+                          <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 11, marginLeft: 5 }}>{r.confidence}%</span>
+                          {r.foundCount > 1 && <span style={{ fontSize: 10, marginLeft: 5, fontWeight: 700, color: qtyOk ? 'var(--green)' : 'var(--amber)' }}>×{r.foundCount}{r.expectedCount ? `/${r.expectedCount}` : ''}</span>}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.4 }}>{r.reason}</div>
+                        {!qtyOk && <div style={{ fontSize: 10, color: 'var(--amber)', marginTop: 2 }}>⚠ Only {r.foundCount} of {r.expectedCount} expected units visible</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Needs manual assignment */}
+            {needsReview.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)', marginBottom: 4, letterSpacing: '.5px' }}>❓ TAP BOX ON PHOTO OR SELECT BELOW ({needsReview.length})</div>
+                {needsReview.map((r, i) => {
+                  const idx = visibleItems.indexOf(r);
+                  const pk = `list-${i}`;
+                  const isOpen = openPicker === pk || openPicker === `bbox-${idx}`;
+                  return (
+                    <div key={i} style={{ marginBottom: 6 }}>
+                      <div className="analysis-result-row" style={{ background: '#e5a10015', alignItems: 'flex-start', marginBottom: 0 }}>
+                        <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 800, color: 'var(--amber)', minWidth: 18 }}>{idx + 1}</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600, color: 'var(--amber)', fontSize: 13 }}>
+                            {r.name === 'UNIDENTIFIED' ? 'Unidentified foreground item' : r.name}
+                            {r.name !== 'UNIDENTIFIED' && <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 11, marginLeft: 5 }}>{r.confidence}%</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.4 }}>{r.reason}</div>
+                          <button
+                            style={{ marginTop: 5, padding: '4px 10px', background: isOpen ? 'var(--amber)' : '#e5a10022', border: '1px solid var(--amber)', color: isOpen ? '#000' : 'var(--amber)', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                            onClick={() => setOpenPicker(isOpen ? null : pk)}>
+                            ✎ {isOpen ? 'Close' : 'Select item...'}
+                          </button>
+                        </div>
+                      </div>
+                      {isOpen && (
+                        <ItemPicker
+                          searchHint={r.name === 'UNIDENTIFIED' ? '' : r.name}
+                          remainingItems={allRemaining}
+                          onSelect={handleAssign}
+                          onDismiss={() => setOpenPicker(null)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {ar.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text3)', fontSize: 13 }}>
+                No foreground items identified. Try a closer photo with items on the counter.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ItemRow({ item }) {
@@ -92,9 +294,9 @@ function ItemRow({ item }) {
           <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {hasPhoto ? '✅ ' : ''}{item.name}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {item.pageNumber && `p.${item.pageNumber}`}
-            {` Qty: ${item.qtyExpected}`}
+          <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 3, display: 'flex', gap: 8 }}>
+            {item.pageNumber && <span>p.{item.pageNumber}</span>}
+            <span>Qty: {item.qtyExpected}</span>
             {hasPhoto && <span style={{ color: 'var(--green)' }}>📷{photos.length}</span>}
           </div>
         </div>
@@ -112,211 +314,6 @@ function ItemRow({ item }) {
   );
 }
 
-// Inline picker component used inside the analysis modal
-function ItemPicker({ searchHint, remainingItems, onSelect, onDismiss }) {
-  const [query, setQuery] = useState(searchHint || '');
-  const scored = remainingItems
-    .map(item => ({ item, score: query ? fuzzyScore(query, item.name) : 50 }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 8);
-
-  return (
-    <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, marginTop: 4, overflow: 'hidden' }}>
-      <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 6 }}>
-        <input
-          className="input"
-          placeholder="Search items..."
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          style={{ fontSize: 12, padding: '6px 10px', flex: 1 }}
-          autoFocus
-        />
-      </div>
-      <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-        {scored.map(({ item, score }) => (
-          <div key={item.id}
-            style={{ padding: '10px 12px', borderBottom: '1px solid #2f333622', fontSize: 12, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}
-            onClick={() => onSelect(item)}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</div>
-              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>Qty: {item.qtyExpected}</div>
-            </div>
-            {query && <span style={{ fontSize: 10, color: 'var(--text3)', flexShrink: 0 }}>{score}%</span>}
-          </div>
-        ))}
-        {!scored.length && <div style={{ padding: '12px', fontSize: 12, color: 'var(--text3)' }}>No items match.</div>}
-      </div>
-      <button
-        style={{ width: '100%', padding: '8px 12px', background: 'none', border: 'none', borderTop: '1px solid var(--border)', color: 'var(--text3)', fontSize: 12, cursor: 'pointer', textAlign: 'left' }}
-        onClick={onDismiss}>
-        ✕ Not a delivery item / skip
-      </button>
-    </div>
-  );
-}
-
-function AnalysisModal() {
-  const { photoAnalysisModal, results: allResults, set } = useStore();
-  const [openPicker, setOpenPicker] = useState(null); // row index with open picker
-
-  if (!photoAnalysisModal) return null;
-  const { blobUrl, analyzing, results: analysisResults, remainingItems = [], allDone } = photoAnalysisModal;
-
-  const handleAssign = (targetItem) => {
-    const map = { ...useStore.getState().itemPhotoMap };
-    if (!map[targetItem.id]) map[targetItem.id] = [];
-    map[targetItem.id].push(blobUrl);
-    set({ itemPhotoMap: map });
-    setOpenPicker(null);
-    // Close modal after assigning
-    set({ photoAnalysisModal: null });
-  };
-
-  // Group results
-  const autoAssigned = (analysisResults || []).filter(r => r.visible && r.name !== 'UNIDENTIFIED' && r.confidence >= 90);
-  const needsReview = (analysisResults || []).filter(r => r.visible && (r.name === 'UNIDENTIFIED' || r.confidence < 90));
-  const notVisible = (analysisResults || []).filter(r => !r.visible);
-
-  return (
-    <div className="analysis-modal" onClick={e => { if (e.target === e.currentTarget) set({ photoAnalysisModal: null }); }}>
-      <button className="photo-modal-close" style={{ position: 'fixed' }} onClick={() => set({ photoAnalysisModal: null })}>✕</button>
-      <div className="analysis-modal-inner">
-        <img src={blobUrl} alt="" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 10, objectFit: 'contain' }} />
-
-        {analyzing && (
-          <div style={{ color: 'var(--text2)', padding: 20, textAlign: 'center' }}>
-            <span className="spinner" style={{ fontSize: 24 }}>⟳</span>
-            <div style={{ fontSize: 13, marginTop: 8 }}>Identifying foreground items...</div>
-            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Reading packaging text only</div>
-          </div>
-        )}
-
-        {allDone && (
-          <div style={{ padding: 16, textAlign: 'center', color: 'var(--green)' }}>
-            <div style={{ fontSize: 22 }}>✅</div>
-            <div style={{ fontSize: 13, marginTop: 8 }}>All items already confirmed!</div>
-          </div>
-        )}
-
-        {analysisResults && !allDone && (
-          <div style={{ width: '100%' }}>
-            {/* Remaining counter */}
-            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10, textAlign: 'center' }}>
-              {remainingItems.length} of {(allResults || []).length} items still to find
-            </div>
-
-            {/* Auto-assigned (high confidence ≥90%) */}
-            {autoAssigned.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', marginBottom: 4, letterSpacing: '.5px' }}>
-                  ✅ AUTO-CONFIRMED ({autoAssigned.length})
-                </div>
-                {autoAssigned.map((r, i) => {
-                  const qtyOk = !r.foundCount || !r.expectedCount || r.foundCount >= r.expectedCount;
-                  return (
-                    <div key={i} className="analysis-result-row" style={{ background: '#52b78815', marginBottom: 4 }}>
-                      <span style={{ flexShrink: 0, fontSize: 15 }}>✅</span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, color: 'var(--green)' }}>
-                          {r.name}
-                          <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 11, marginLeft: 6 }}>{r.confidence}%</span>
-                          {r.foundCount > 1 && (
-                            <span style={{ fontSize: 10, marginLeft: 6, fontWeight: 700, color: qtyOk ? 'var(--green)' : 'var(--amber)' }}>
-                              ×{r.foundCount}{r.expectedCount ? `/${r.expectedCount}` : ''}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, lineHeight: 1.4 }}>{r.reason}</div>
-                        {!qtyOk && (
-                          <div style={{ fontSize: 10, color: 'var(--amber)', marginTop: 2 }}>
-                            ⚠ Only {r.foundCount} of {r.expectedCount} expected units visible
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Needs review (uncertain or UNIDENTIFIED) */}
-            {needsReview.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)', marginBottom: 4, letterSpacing: '.5px' }}>
-                  ❓ NEEDS MANUAL ASSIGNMENT ({needsReview.length})
-                </div>
-                {needsReview.map((r, i) => {
-                  const isUnidentified = r.name === 'UNIDENTIFIED';
-                  const searchHint = isUnidentified ? '' : r.name;
-                  const pickerKey = `review-${i}`;
-                  return (
-                    <div key={i} style={{ marginBottom: 6 }}>
-                      <div className="analysis-result-row" style={{ background: '#e5a10015', alignItems: 'flex-start' }}>
-                        <span style={{ flexShrink: 0, fontSize: 15, marginTop: 1 }}>❓</span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 600, color: 'var(--amber)' }}>
-                            {isUnidentified ? 'Unidentified foreground item' : r.name}
-                            {!isUnidentified && <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 11, marginLeft: 6 }}>{r.confidence}%</span>}
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, lineHeight: 1.4 }}>{r.reason}</div>
-                          <button
-                            style={{ marginTop: 6, padding: '5px 12px', background: '#e5a10022', border: '1px solid #e5a10055', color: 'var(--amber)', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
-                            onClick={() => setOpenPicker(openPicker === pickerKey ? null : pickerKey)}>
-                            {openPicker === pickerKey ? '▲ Close' : '✎ Select item...'}
-                          </button>
-                        </div>
-                      </div>
-                      {openPicker === pickerKey && remainingItems.length > 0 && (
-                        <ItemPicker
-                          searchHint={searchHint}
-                          remainingItems={remainingItems}
-                          onSelect={handleAssign}
-                          onDismiss={() => setOpenPicker(null)}
-                        />
-                      )}
-                      {openPicker === pickerKey && remainingItems.length === 0 && (
-                        <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text3)', background: 'var(--bg2)', borderRadius: 8, marginTop: 4 }}>
-                          All items already confirmed.
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Not visible */}
-            {notVisible.length > 0 && (
-              <details style={{ marginTop: 4 }}>
-                <summary style={{ fontSize: 11, color: 'var(--text3)', cursor: 'pointer', padding: '4px 0' }}>
-                  ❌ Not seen in foreground ({notVisible.length})
-                </summary>
-                <div style={{ marginTop: 4 }}>
-                  {notVisible.map((r, i) => (
-                    <div key={i} className="analysis-result-row" style={{ background: '#ffffff08', marginBottom: 4 }}>
-                      <span style={{ flexShrink: 0, fontSize: 15 }}>❌</span>
-                      <div>
-                        <div style={{ fontWeight: 600, color: 'var(--text3)' }}>{r.name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{r.reason}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-
-            {analysisResults.length === 0 && (
-              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text3)', fontSize: 13 }}>
-                No foreground items identified. Try a closer photo.
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export default function VerifyStep() {
   const store = useStore();
   const { results, itemPhotoMap, itemPhotos, bulkPhotoResults, selectedSupplier, set, resetDelivery } = store;
@@ -330,11 +327,21 @@ export default function VerifyStep() {
     return (bH ? 1 : 0) - (aH ? 1 : 0);
   });
 
+  const handleBulkAdd = (files) => {
+    const newFiles = Array.from(files);
+    if (!newFiles.length) return;
+    const startIdx = itemPhotos.length;
+    set({ itemPhotos: [...itemPhotos, ...newFiles] });
+    // Auto-analyze the first new photo immediately
+    setTimeout(() => analyzePhotoItems(startIdx, set, useStore.getState), 50);
+  };
+
   const handleAnalyze = (idx) => {
     if (bulkPhotoResults[idx]) {
       const url = URL.createObjectURL(itemPhotos[idx]);
-      const remainingItems = getRemainingItems(results, itemPhotoMap);
-      set({ photoAnalysisModal: { photoIdx: idx, blobUrl: url, analyzing: false, results: bulkPhotoResults[idx], remainingItems } });
+      const allRemaining = getRemainingItems(results, itemPhotoMap);
+      const remainingItems = allRemaining.slice(0, MAX_ITEMS_PER_ANALYSIS);
+      set({ photoAnalysisModal: { photoIdx: idx, blobUrl: url, analyzing: false, results: bulkPhotoResults[idx], remainingItems, allRemaining, hiddenCount: allRemaining.length - remainingItems.length } });
     } else {
       analyzePhotoItems(idx, set, useStore.getState);
     }
@@ -366,35 +373,36 @@ export default function VerifyStep() {
           </button>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 8px' }}>
-          Tap to identify items. AI reads packaging text only — ignores glass/background. Already-confirmed items are skipped.
+          Photo analyzes automatically on upload · reads packaging text only · up to {MAX_ITEMS_PER_ANALYSIS} items per photo
         </p>
         <input ref={bulkRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
-          onChange={e => { set({ itemPhotos: [...itemPhotos, ...Array.from(e.target.files)] }); e.target.value = ''; }} />
+          onChange={e => { handleBulkAdd(e.target.files); e.target.value = ''; }} />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {itemPhotos.length ? itemPhotos.map((f, i) => {
-            const url = URL.createObjectURL(f);
             const res = bulkPhotoResults[i];
-            const foundCount = res ? res.filter(r => r.visible && r.name !== 'UNIDENTIFIED').length : null;
+            const url = URL.createObjectURL(f);
+            const foundCount = res ? res.filter(r => r.visible && r.name !== 'UNIDENTIFIED' && r.confidence >= 90).length : null;
             const pendingCount = res ? res.filter(r => r.visible && (r.name === 'UNIDENTIFIED' || r.confidence < 90)).length : null;
+            const hasPending = pendingCount > 0;
             return (
               <div key={i} style={{ position: 'relative', cursor: 'pointer', flexShrink: 0 }} onClick={() => handleAnalyze(i)}>
-                <img src={url} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, border: `2px solid ${res ? (pendingCount > 0 ? 'var(--amber)' : 'var(--green)') : 'var(--border)'}` }} />
+                <img src={url} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, border: `2px solid ${res ? (hasPending ? 'var(--amber)' : 'var(--green)') : 'var(--border)'}` }} />
                 {foundCount !== null ? (
-                  <span style={{ position: 'absolute', bottom: 3, left: 3, right: 3, background: '#000000bb', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 4, textAlign: 'center' }}>
-                    {foundCount} found{pendingCount > 0 ? ` · ${pendingCount}❓` : ''}
+                  <span style={{ position: 'absolute', bottom: 3, left: 3, right: 3, background: '#000000cc', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 4, textAlign: 'center' }}>
+                    {foundCount}✓{hasPending ? ` ${pendingCount}❓` : ''}
                   </span>
                 ) : (
-                  <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#00000055', borderRadius: 6, fontSize: 9, color: '#fff', textAlign: 'center', lineHeight: 1.3, padding: 4 }}>Tap to<br />analyze</span>
+                  <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#00000077', borderRadius: 6, fontSize: 10, color: '#fff' }}>
+                    <span className="spinner">⟳</span>
+                  </span>
                 )}
               </div>
             );
-          }) : <div style={{ color: 'var(--text3)', fontSize: 12, padding: '8px 0' }}>No overview photos yet.</div>}
+          }) : <div style={{ color: 'var(--text3)', fontSize: 12, padding: '8px 0' }}>No photos yet — add a photo to start.</div>}
         </div>
       </div>
 
-      <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, letterSpacing: '.5px', marginBottom: 8 }}>
-        DELIVERY ITEMS ({items.length})
-      </div>
+      <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, letterSpacing: '.5px', marginBottom: 8 }}>DELIVERY ITEMS ({items.length})</div>
       {sorted.map(item => <ItemRow key={item.id} item={item} />)}
 
       <button className="btn btn-primary" style={{ width: '100%', padding: 16, fontSize: 15, fontWeight: 700, marginTop: 12 }}
