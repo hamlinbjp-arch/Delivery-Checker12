@@ -60,12 +60,33 @@ input,textarea,select,button{font-family:inherit;color:inherit}
 .stat-val{font-size:20px;font-weight:800;font-family:var(--font-mono)}
 .stat-label{font-size:10px;color:var(--text3);margin-top:2px}
 /* result row */
-.result-row{border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:8px;background:var(--bg2)}
-.result-row.new-item{background:#e5a10008;border-color:#e5a10066}
-.result-row.damaged{background:#f4433608;border-color:#f4433666}
-.result-row.matched{border-color:#52b78844}
-.row-header{padding:12px 14px;cursor:pointer;display:flex;align-items:flex-start;gap:10px}
+.result-row{border:1px solid var(--border);border-left:3px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:8px;background:var(--bg2)}
+.result-row.row-red{border-left-color:#f44336;background:#f4433606}
+.result-row.row-yellow{border-left-color:#e5a100;background:#e5a10006}
+.result-row.row-green{border-left-color:#52b788;background:#52b78806}
+.result-row.damaged{border-left-color:#f44336!important;background:#f4433610!important}
+.row-header{padding:12px 14px;display:flex;align-items:center;gap:10px}
+.row-header-tap{flex:1;min-width:0;cursor:pointer}
 .row-details{padding:0 14px 12px;border-top:1px solid #2f333644}
+/* photo strip */
+.photo-strip{display:flex;gap:6px;flex-wrap:wrap;padding:8px 14px 4px}
+.photo-thumb{width:56px;height:56px;object-fit:cover;border-radius:6px;cursor:pointer;border:2px solid var(--green-dark)}
+/* camera button on each row */
+.btn-camera{padding:10px 12px;background:var(--green-dark);color:#fff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.btn-camera:active{background:#1e4d38}
+/* photo modal */
+.photo-modal{position:fixed;inset:0;background:#000000ee;z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
+.photo-modal img{max-width:100%;max-height:100%;border-radius:8px;object-fit:contain}
+.photo-modal-close{position:absolute;top:16px;right:16px;background:#ffffff22;border:none;color:#fff;border-radius:50%;width:40px;height:40px;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+/* analysis modal (scrollable, stacked content) */
+.analysis-modal{position:fixed;inset:0;background:#000000ee;z-index:200;overflow-y:auto;padding:16px}
+.analysis-modal-inner{max-width:520px;margin:40px auto 20px;display:flex;flex-direction:column;align-items:center;gap:12px}
+.analysis-result-row{width:100%;display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-radius:8px;font-size:12px}
+/* step progress bar */
+.step-bar{display:flex;gap:4px;margin-bottom:16px}
+.step-pill{flex:1;height:4px;border-radius:4px;background:var(--border)}
+.step-pill.active{background:var(--green)}
+.step-pill.done{background:var(--green-dark)}
 /* pos entry mode */
 .pos-mode{min-height:100vh;background:#0a0d11;color:var(--text);font-family:var(--font-mono)}
 .pos-header{background:var(--bg2);padding:12px 16px;display:flex;justify-content:space-between;
@@ -185,12 +206,32 @@ function fuzzyScore(a,b){
   }
   return Math.round(matched/Math.max(ta.length,tb.length)*100);
 }
-function findBestPOSMatch(itemName,posList,mappings={}){
+function findBestPOSMatch(itemName,posList,mappings={},aliases={}){
   if(!posList||!posList.length)return{code:'',name:'',confidence:0};
-  const mc=mappings[normalize(itemName)];
+  const key=normalize(itemName);
+  // 1. Supplier-learned exact mappings (highest priority)
+  const mc=mappings[key];
   if(mc){const e=posList.find(p=>p.code===mc);if(e)return{code:e.code,name:e.description,confidence:98,learned:true}}
+  // 2. Global alias mappings (physical label / internal name → POS code)
+  const ac=aliases[key];
+  if(ac){const e=posList.find(p=>p.code===ac);if(e)return{code:e.code,name:e.description,confidence:97,aliased:true}}
+  // 3. Fuzzy score against POS descriptions. Also check each POS item's aliases.
+  // Build reverse alias map: posCode → [aliasNames]
+  const reverseAlias={};
+  for(const[label,code] of Object.entries(aliases)){
+    if(!reverseAlias[code])reverseAlias[code]=[];
+    reverseAlias[code].push(label);
+  }
   let best={code:'',name:'',confidence:0};
-  for(const p of posList){const s=fuzzyScore(itemName,p.description);if(s>best.confidence)best={code:p.code,name:p.description,confidence:s}}
+  for(const p of posList){
+    let s=fuzzyScore(itemName,p.description);
+    // Also fuzzy-score against any aliases for this POS item
+    for(const alias of (reverseAlias[p.code]||[])){
+      const sa=fuzzyScore(itemName,alias);
+      if(sa>s)s=sa;
+    }
+    if(s>best.confidence)best={code:p.code,name:p.description,confidence:s};
+  }
   return best;
 }
 
@@ -199,10 +240,32 @@ function fileToBase64(file){
   return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=()=>rej(new Error('Read failed'));r.readAsDataURL(file)})
 }
 
+// Resize image to max 1600px on longest side, return base64 JPEG
+function resizeImage(file,maxPx=1600,quality=0.82){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      let{width:w,height:h}=img;
+      if(w>maxPx||h>maxPx){const s=maxPx/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s)}
+      const c=document.createElement('canvas');c.width=w;c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      res(c.toDataURL('image/jpeg',quality).split(',')[1]);
+    };
+    img.onerror=()=>rej(new Error('Image load failed'));
+    img.src=url;
+  });
+}
+
 /* ── CSV ── */
 function generateCSV(items,notes){
-  const h=['Delivery Item','Qty Expected','Physical Match','POS Code','POS Name','Match Confidence','Damage Flag','Damage Note','Status','New Item','Manual Notes','Delivery Notes'];
-  const rows=items.map(it=>[it.name,it.qtyExpected,it.physicalMatch?'Yes':'No',it.posCode,it.posName,pct(it.confidence),it.damaged?'Yes':'No',it.damageNote||'',it.status,it.status==='NEW ITEM'?'Yes':'No',it.manualNotes||'',notes||'']);
+  const h=['Item ID','Delivery Item','Qty Expected','POS Code','Idealpos Name','Match Confidence','Match Source','Photos Attached','Damage Flag','Damage Note','Status','Manual Notes','Delivery Notes'];
+  const rows=items.map(it=>{
+    const photoCount=(APP.itemPhotoMap[it.id]||[]).length;
+    const matchSrc=it.learned?'Learned':it.aliased?'Alias':'Fuzzy';
+    return[it.id,it.name,it.qtyExpected,it.posCode||'',it.posName||'',pct(it.confidence),matchSrc,photoCount,it.damaged?'Yes':'No',it.damageNote||'',it.status,it.manualNotes||'',notes||''];
+  });
   return[h.map(esc).join(','),...rows.map(r=>r.map(esc).join(','))].join('\n');
 }
 function downloadCSV(items,notes,supplier){
@@ -213,14 +276,22 @@ function downloadCSV(items,notes,supplier){
 }
 
 /* ── API ── */
-async function callClaude(apiKey,messages,systemPrompt){
-  const resp=await fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8000,system:systemPrompt,messages})
-  });
-  if(!resp.ok){const e=await resp.text();throw new Error(`API ${resp.status}: ${e}`)}
-  return resp.json();
+async function callClaude(apiKey,messages,systemPrompt,maxTokens=8000){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),90000);
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:maxTokens,system:systemPrompt,messages}),
+      signal:controller.signal
+    });
+    if(!resp.ok){const e=await resp.text();throw new Error(`API ${resp.status}: ${e}`)}
+    return resp.json();
+  }catch(e){
+    if(e.name==='AbortError')throw new Error('Request timed out after 90s');
+    throw e;
+  }finally{clearTimeout(timer)}
 }
 
 /* ═══════════════════════════════════════════════════ */
@@ -245,8 +316,16 @@ const APP={
   issuesOnly:false,
   showPOSEntry:false,
   posChecked:new Set(),
+  // per-item photos (taken during unpacking)
+  itemPhotoMap:{}, // itemId -> array of blob URL strings
+  viewingPhoto:null, // blob URL currently open in modal
+  resultsSearch:'', // filter text for results list
   // ui
   expandedRows:new Set(),
+  // two-step delivery flow
+  deliveryStep:'form', // 'form' | 'verify' | 'pos'
+  bulkPhotoResults:{},  // photoIdx -> [{name,visible,confidence,reason}]
+  photoAnalysisModal:null, // {photoIdx,blobUrl,analyzing,results}
 };
 
 function setupDone(){return APP.apiKey&&APP.posData}
@@ -270,8 +349,12 @@ function render(){
   let html=renderHeader();
   html+=`<div style="padding:0 12px 12px">`;
   if(APP.page==='delivery'){
-    if(APP.results||APP.viewingHistory){
+    if(APP.viewingHistory){
       html+=renderResults();
+    }else if(APP.deliveryStep==='verify'&&APP.results){
+      html+=renderVerifyStep();
+    }else if(APP.deliveryStep==='pos'&&APP.results){
+      html+=renderPOSStep();
     }else{
       html+=renderDeliveryForm();
     }
@@ -378,23 +461,24 @@ function renderDeliveryForm(){
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         ${icon('file',16)}<span style="font-size:13px;font-weight:600">Delivery Report / Invoice</span>
       </div>
-      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Photo or PDF of the supplier's delivery docket</p>
-      <input id="report-input" type="file" accept="image/*,.pdf" capture="environment" style="display:none">
+      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">PDF or photo of the supplier's delivery docket</p>
+      <input id="report-input" type="file" accept="image/*,.pdf" multiple style="display:none">
       <div class="upload-zone">
         <button class="upload-add" id="report-add-btn">${icon('plus',14)} Add</button>
         ${reportChips}
       </div>
     </div>
 
-    <!-- Photo Upload -->
+    <!-- Item Photos -->
     <div class="card">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        ${icon('camera',16)}<span style="font-size:13px;font-weight:600">Physical Items (Optional)</span>
+        ${icon('camera',16)}<span style="font-size:13px;font-weight:600">Delivery Item Photos <span style="font-weight:400;color:var(--text3)">(optional)</span></span>
       </div>
-      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Photos of actual items received</p>
-      <input id="photo-input" type="file" accept="image/*" capture="environment" multiple style="display:none">
+      <p style="font-size:11px;color:var(--text3);margin:0 0 10px">Upload any photos of the delivered items now — you can also add more per item after processing</p>
+      <input id="photo-input" type="file" accept="image/*" multiple style="display:none">
       <div class="upload-zone">
-        <button class="upload-add" id="photo-add-btn">${icon('plus',14)} Add</button>
+        <button class="upload-add" id="photo-add-btn">${icon('camera',14)} Camera</button>
+        <button class="upload-add" id="photo-file-btn" style="border-style:solid">${icon('plus',14)} Gallery</button>
         ${photoChips}
       </div>
     </div>
@@ -434,11 +518,29 @@ function renderDeliveryForm(){
 /* ═══════════════════════════════════════════════════ */
 function renderResults(){
   const allItems=APP.results||APP.viewingHistory?.items||[];
-  const items=APP.issuesOnly?allItems.filter(i=>i.status!=='Matched'):allItems;
-  const matched=allItems.filter(i=>i.status==='Matched').length;
+  const aliases=APP.posData?.aliases||{};
+  // Fuzzy search across delivery name, Idealpos name, and alias labels
+  const q=APP.resultsSearch.trim();
+  const filtered=q?allItems.filter(i=>{
+    if(fuzzyScore(q,i.name)>=50)return true;
+    if(i.posName&&fuzzyScore(q,i.posName)>=50)return true;
+    // Check if query matches any alias that maps to this item's POS code
+    for(const[label,code] of Object.entries(aliases)){
+      if(code===i.posCode&&fuzzyScore(q,label)>=50)return true;
+    }
+    return false;
+  }):allItems;
+  const baseItems=APP.issuesOnly?filtered.filter(i=>i.status!=='Matched'):filtered;
+  // Confirmed (has photo) items rise to top; unconfirmed keep original order
+  const items=[...baseItems].sort((a,b)=>{
+    const aConf=(APP.itemPhotoMap[a.id]||[]).length>0;
+    const bConf=(APP.itemPhotoMap[b.id]||[]).length>0;
+    return (bConf?1:0)-(aConf?1:0);
+  });
+  const confirmed=allItems.filter(i=>(APP.itemPhotoMap[i.id]||[]).length>0).length;
   const newC=allItems.filter(i=>i.status==='NEW ITEM').length;
   const dmg=allItems.filter(i=>i.damaged).length;
-  const issues=allItems.filter(i=>i.status!=='Matched').length;
+  const issues=allItems.filter(i=>i.status!=='Matched'||!(APP.itemPhotoMap[i.id]||[]).length).length;
   const supplier=APP.selectedSupplier||APP.viewingHistory?.supplier||'';
   const notes=APP.deliveryNotes||APP.viewingHistory?.notes||'';
   const isHist=!!APP.viewingHistory;
@@ -449,76 +551,427 @@ function renderResults(){
         <h2 style="font-size:18px;font-weight:700;margin:0">${isHist?'📋':'✅'} Results</h2>
         ${supplier?`<p style="font-size:12px;color:var(--text3);margin:2px 0 0">${supplier}</p>`:''}
       </div>
-      <button class="btn btn-ghost" id="results-back-btn" style="padding:6px 12px;font-size:12px">${isHist?'← Back':'New'}</button>
+      <div style="display:flex;gap:6px">
+        ${!isHist?`<button class="btn btn-ghost" id="pos-entry-btn" style="padding:6px 10px;font-size:11px;color:var(--green)">${icon('zap',12)} POS</button>`:''}
+        <button class="btn btn-ghost" id="results-back-btn" style="padding:6px 12px;font-size:12px">${isHist?'← Back':'New'}</button>
+      </div>
     </div>`;
 
   if(notes)html+=`<div class="card" style="padding:8px 12px;font-size:12px;color:var(--text2)">📝 ${notes}</div>`;
 
   html+=`<div class="stats">
     <div class="stat"><div class="stat-val" style="color:var(--text2)">${allItems.length}</div><div class="stat-label">Total</div></div>
-    <div class="stat"><div class="stat-val" style="color:var(--green)">${matched}</div><div class="stat-label">Matched</div></div>
+    <div class="stat"><div class="stat-val" style="color:var(--green)">${confirmed}</div><div class="stat-label">Confirmed</div></div>
     <div class="stat"><div class="stat-val" style="color:var(--amber)">${newC}</div><div class="stat-label">New</div></div>
     <div class="stat"><div class="stat-val" style="color:var(--red)">${dmg}</div><div class="stat-label">Damaged</div></div>
   </div>`;
 
+  // Legend
+  html+=`<details style="margin-bottom:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--text2)">
+    <summary style="cursor:pointer;font-weight:600;color:var(--text);list-style:none">▾ Key / Legend</summary>
+    <div style="margin-top:8px;display:grid;gap:4px">
+      <div><span style="display:inline-block;width:12px;height:12px;background:#52b788;border-radius:2px;margin-right:6px;vertical-align:middle"></span><b>Green row</b> — photo taken, item confirmed received</div>
+      <div><span style="display:inline-block;width:12px;height:12px;background:#e5a100;border-radius:2px;margin-right:6px;vertical-align:middle"></span><b>Yellow row</b> — uncertain POS match, needs manual check</div>
+      <div><span style="display:inline-block;width:12px;height:12px;background:#f44336;border-radius:2px;margin-right:6px;vertical-align:middle"></span><b>Red row</b> — not yet photographed</div>
+      <div style="margin-top:4px">✅ Strong Idealpos match (≥80%) &nbsp; ⚠️ Fuzzy match (45–79%), verify &nbsp; ❌ Not found in Idealpos (<45%)</div>
+      <div>📷 N = N photos attached to this item &nbsp; p.N = delivery report page number</div>
+    </div>
+  </details>`;
+
+  // Search
+  html+=`<div style="margin-bottom:10px;position:relative">
+    <input id="results-search" class="input" placeholder="Search by name, Idealpos name, or label alias..." value="${APP.resultsSearch}" style="padding-left:32px;font-size:12px">
+    <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none;opacity:.5">${icon('search',14)}</span>
+    ${q?`<span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text3)">${filtered.length}/${allItems.length}</span>`:''}
+  </div>`;
+
   html+=`<div class="action-bar">
     <button class="btn ${APP.issuesOnly?'':'btn-ghost'}" id="toggle-issues" style="${APP.issuesOnly?'background:#e5a10022;border:1px solid var(--amber);color:var(--amber)':''}">
-      ${icon('filter',14)} ${APP.issuesOnly?'All Items':`Issues (${issues})`}
+      ${icon('filter',14)} ${APP.issuesOnly?'All':'Unconfirmed'}
     </button>
-    <button class="btn btn-ghost" id="pos-entry-btn" style="color:var(--green)">${icon('zap',14)} POS Entry</button>
+    <button class="btn btn-ghost" id="bulk-photo-btn" style="color:var(--green)">${icon('camera',14)} Bulk Photo</button>
     <button class="btn btn-ghost" id="export-btn">${icon('download',14)} CSV</button>
   </div>`;
+
+  // Hidden file inputs
+  html+=`<input id="item-photo-input-camera" type="file" accept="image/*" capture="environment" style="display:none">`;
+  html+=`<input id="item-photo-input-files" type="file" accept="image/*,.pdf" multiple style="display:none">`;
+  html+=`<input id="bulk-photo-input" type="file" accept="image/*" multiple style="display:none">`;
+
+  // Overview photos strip (bulk shots not tied to specific items)
+  if(APP.itemPhotos.length){
+    const urls=APP.itemPhotos.map((f,i)=>URL.createObjectURL(f));
+    html+=`<div style="margin-bottom:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px">📦 Delivery overview photos (${APP.itemPhotos.length})</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${urls.map((url,i)=>`<img src="${url}" data-view-photo="${url}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid var(--border)">`).join('')}</div>
+    </div>`;
+  }
 
   // Item rows
   html+=`<div id="results-list">`;
   for(const item of items){
-    const isNew=item.status==='NEW ITEM';
     const isDmg=item.damaged||item.status==='Damaged';
-    const cls=isNew?'new-item':isDmg?'damaged':item.status==='Matched'?'matched':'';
-    const confColor=item.confidence>=80?'var(--green)':item.confidence>=60?'var(--amber)':'var(--red)';
-    const expanded=APP.expandedRows.has(item.id);
+    const photos=APP.itemPhotoMap[item.id]||[];
+    const hasPhoto=photos.length>0;
 
-    html+=`<div class="result-row ${cls}">
-      <div class="row-header" data-toggle-row="${item.id}">
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-            ${isNew?'<span class="badge badge-new">NEW</span>':''}
-            ${isDmg?'<span class="badge badge-dmg">DMG</span>':''}
-            <span style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+    // Row colour: green=photo taken, yellow=uncertain/new, red=no photo yet
+    let rowCls='row-red';
+    if(hasPhoto) rowCls='row-green';
+    else if(item.confidence<70||item.status==='NEW ITEM') rowCls='row-yellow';
+    if(isDmg) rowCls='damaged';
+
+    // POS indicator
+    const posIndicator=item.confidence>=80||item.learned?'✅':item.confidence>=50?'⚠️':'❌';
+
+    const expanded=APP.expandedRows.has(item.id);
+    const confColor=item.confidence>=80?'var(--green)':item.confidence>=50?'var(--amber)':'var(--red)';
+
+    // Meta tags: supplier code, page, qty, POS
+    const metaParts=[];
+    if(item.supplierCode)metaParts.push(`<span style="color:var(--text3)">Ref: ${item.supplierCode}</span>`);
+    if(item.pageNumber)metaParts.push(`<span style="color:var(--text3)">p.${item.pageNumber}</span>`);
+    metaParts.push(`Qty: <b style="color:var(--text)">${item.qtyExpected}</b>`);
+    if(item.posCode)metaParts.push(`POS: <b style="color:var(--green);font-family:var(--font-mono)">${item.posCode}</b>`);
+    metaParts.push(`<span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span>`);
+    if(hasPhoto)metaParts.push(`<span style="color:var(--green)">📷${photos.length}</span>`);
+    const camDisabled=photos.length>=10?'disabled':'';
+
+    html+=`<div class="result-row ${rowCls}">
+      <div class="row-header">
+        <div class="row-header-tap" data-toggle-row="${item.id}" style="min-width:0;flex:1">
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px">
+            <span style="font-size:15px;flex-shrink:0">${posIndicator}</span>
+            <span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
           </div>
-          <div style="display:flex;gap:12px;font-size:11px;color:var(--text3)">
-            <span>Qty: <b style="color:var(--text)">${item.qtyExpected}</b></span>
-            ${item.posCode?`<span style="font-family:var(--font-mono)">POS: <b style="color:var(--green)">${item.posCode}</b></span>`:''}
-            <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span>
-          </div>
+          <div style="font-size:11px;color:var(--text2);padding-left:20px;display:flex;gap:8px;flex-wrap:wrap">${metaParts.join(' · ')}</div>
         </div>
-        ${expanded?icon('chevDown',16):icon('chevRight',16)}
+        <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px">
+          <button class="btn-camera" data-item-photo="${item.id}" data-use-camera="true" title="Camera" ${camDisabled}>${icon('camera',18)}</button>
+          <button class="btn-camera" data-item-photo="${item.id}" data-use-camera="false" title="File" style="background:#1e4d38;padding:8px 10px;font-size:14px" ${camDisabled}>📎</button>
+        </div>
       </div>`;
 
+    if(photos.length){
+      html+=`<div class="photo-strip">${photos.map((url,pi)=>`<img class="photo-thumb" src="${url}" data-view-photo="${url}" data-item-id="${item.id}" data-photo-idx="${pi}">`).join('')}</div>`;
+    }
+
     if(expanded){
-      const statusColor=item.status==='Matched'?'var(--green)':item.status==='NEW ITEM'?'var(--amber)':item.status==='Damaged'?'var(--red)':'var(--text2)';
+      const existingAlias=Object.entries(APP.posData?.aliases||{}).find(([,code])=>code===item.posCode);
       html+=`<div class="row-details"><div style="padding-top:10px;display:grid;gap:8px;font-size:12px">
-        <div><span style="color:var(--text3)">POS Match:</span> <span style="color:var(--text2)">${item.posName||'—'}</span></div>
-        <div><span style="color:var(--text3)">POS Code:</span> <span style="font-family:var(--font-mono);color:var(--green)">${item.posCode||'—'}</span></div>
-        <div><span style="color:var(--text3)">Confidence:</span> <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span></div>
-        <div><span style="color:var(--text3)">Physical:</span> <span>${item.physicalMatch?'✓ Seen':'Not verified'}</span></div>
-        <div><span style="color:var(--text3)">Status:</span> <span style="color:${statusColor};font-weight:600">${item.status}</span></div>
-        <div style="display:flex;gap:8px;margin-top:4px">
-          <button class="btn ${isDmg?'btn-danger':'btn-ghost'}" data-toggle-dmg="${item.id}" style="flex:1;font-size:12px">
-            ${icon('flag',14)} ${isDmg?'Remove Flag':'Flag Damage'}
-          </button>
-          ${item.confidence>=50&&item.confidence<95&&!item.learned?`<button class="btn" data-confirm-match="${item.id}" style="background:#2d6a4f22;border:1px solid var(--green-dark);color:var(--green);font-size:12px">${icon('check',14)} Confirm</button>`:''}
+        <div><span style="color:var(--text3)">Idealpos:</span> ${item.posName||'—'} <span style="font-family:var(--font-mono);color:var(--green)">${item.posCode?`(${item.posCode})`:''}</span></div>
+        <div><span style="color:var(--text3)">Match:</span> <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span> <span style="color:var(--text3);font-size:10px">${item.aliased?'via alias':item.learned?'learned':'fuzzy'}</span></div>
+        ${item.posCode?`<div style="display:flex;gap:6px;align-items:center">
+          <input class="input" data-alias-input="${item.id}" placeholder="Save label alias (e.g. 'Coke 2L')" value="${existingAlias?existingAlias[0]:''}" style="font-size:11px;padding:6px 8px;flex:1">
+          <button class="btn btn-ghost" data-save-alias="${item.id}" style="font-size:11px;padding:6px 10px">Save</button>
+        </div>`:''}
+        <div style="display:flex;gap:8px">
+          <button class="btn ${isDmg?'btn-danger':'btn-ghost'}" data-toggle-dmg="${item.id}" style="flex:1;font-size:12px">${icon('flag',12)} ${isDmg?'Unflag':'Flag Damage'}</button>
+          ${item.confidence>=45&&item.confidence<95&&!item.learned&&!item.aliased?`<button class="btn" data-confirm-match="${item.id}" style="background:#2d6a4f22;border:1px solid var(--green-dark);color:var(--green);font-size:12px">${icon('check',12)} Confirm match</button>`:''}
         </div>
-        ${isDmg?`<input class="input" data-dmg-note="${item.id}" placeholder="Damage description..." value="${item.damageNote||''}" style="font-size:12px;padding:8px 10px;border-color:#f4433644">`:''}
-        ${isNew?`<input class="input" data-manual-note="${item.id}" placeholder="Manual POS code or notes..." value="${item.manualNotes||''}" style="font-size:12px;padding:8px 10px;font-family:var(--font-mono);border-color:#e5a10044">`:''}
+        ${isDmg?`<input class="input" data-dmg-note="${item.id}" placeholder="Damage notes..." value="${item.damageNote||''}" style="font-size:12px;padding:8px 10px;border-color:#f4433644">`:''}
+        ${item.status==='NEW ITEM'?`<input class="input" data-manual-note="${item.id}" placeholder="Manual POS code or notes..." value="${item.manualNotes||''}" style="font-size:12px;padding:8px 10px;font-family:var(--font-mono);border-color:#e5a10044">`:''}
+        ${photos.length?`<div style="display:flex;flex-wrap:wrap;gap:4px">${photos.map((url,pi)=>`<button class="btn btn-ghost" data-rm-item-photo="${item.id}" data-photo-idx="${pi}" style="font-size:10px;padding:4px 8px;color:var(--red)">✕ #${pi+1}</button>`).join('')}</div>`:''}
       </div></div>`;
     }
     html+=`</div>`;
   }
   if(!items.length){
-    html+=`<div style="text-align:center;padding:32px;color:var(--text3)">${APP.issuesOnly?'No issues found — all items matched!':'No items to display.'}</div>`;
+    html+=`<div style="text-align:center;padding:32px;color:var(--text3)">${APP.issuesOnly?'No issues found!':'No items to display.'}</div>`;
   }
+  html+=`</div>`;
+
+  // Photo modal
+  if(APP.viewingPhoto){
+    html+=`<div class="photo-modal" id="photo-modal">
+      <button class="photo-modal-close" id="photo-modal-close">✕</button>
+      <img src="${APP.viewingPhoto}">
+    </div>`;
+  }
+
+  html+=`</div>`;
+  return html;
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  STEP 1: PHOTO VERIFY                               */
+/* ═══════════════════════════════════════════════════ */
+function renderVerifyStep(){
+  const items=APP.results||[];
+  const confirmed=items.filter(i=>(APP.itemPhotoMap[i.id]||[]).length>0).length;
+  const remaining=items.length-confirmed;
+  const supplier=APP.selectedSupplier||'';
+  const sorted=[...items].sort((a,b)=>{
+    const aH=(APP.itemPhotoMap[a.id]||[]).length>0;
+    const bH=(APP.itemPhotoMap[b.id]||[]).length>0;
+    return (bH?1:0)-(aH?1:0);
+  });
+
+  let html=`<div style="padding-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div>
+        <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">STEP 1 OF 2</div>
+        <h2 style="font-size:18px;font-weight:700;margin:0">📷 Photo Verification</h2>
+        ${supplier?`<p style="font-size:12px;color:var(--text3);margin:2px 0 0">${supplier}</p>`:''}
+      </div>
+      <button class="btn btn-ghost" id="verify-new-btn" style="padding:6px 12px;font-size:12px">New</button>
+    </div>
+    <div class="step-bar"><div class="step-pill active"></div><div class="step-pill"></div></div>
+
+    <div class="stats" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat"><div class="stat-val">${items.length}</div><div class="stat-label">Total</div></div>
+      <div class="stat"><div class="stat-val" style="color:var(--green)">${confirmed}</div><div class="stat-label">Confirmed</div></div>
+      <div class="stat"><div class="stat-val" style="color:var(--red)">${remaining}</div><div class="stat-label">Remaining</div></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:13px;font-weight:600">📦 Overview Photos</span>
+        <button class="btn btn-ghost" id="bulk-add-btn" style="font-size:11px;padding:5px 10px">${icon('camera',13)} Add</button>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin:0 0 8px">Tap a photo to identify which items are visible in it</p>
+      <input id="bulk-photo-input" type="file" accept="image/*" multiple style="display:none">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">`;
+
+  if(APP.itemPhotos.length){
+    for(let i=0;i<APP.itemPhotos.length;i++){
+      const url=URL.createObjectURL(APP.itemPhotos[i]);
+      const res=APP.bulkPhotoResults[i];
+      const foundCount=res?res.filter(r=>r.visible).length:null;
+      html+=`<div style="position:relative;cursor:pointer;flex-shrink:0" data-analyze-photo="${i}">
+        <img src="${url}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:2px solid ${res?'var(--green)':'var(--border)'}">
+        ${foundCount!==null?`<span style="position:absolute;bottom:3px;left:3px;right:3px;background:#000000bb;color:#fff;font-size:9px;padding:1px 4px;border-radius:4px;text-align:center">${foundCount} found</span>`:''}
+        ${!res?`<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#00000055;border-radius:6px;font-size:9px;color:#fff;text-align:center;line-height:1.3;padding:4px">Tap to<br>analyze</span>`:''}
+      </div>`;
+    }
+  }else{
+    html+=`<div style="color:var(--text3);font-size:12px;padding:8px 0">No overview photos yet. Add bulk photos of the delivery.</div>`;
+  }
+
   html+=`</div></div>`;
+
+  // Item list
+  html+=`<div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px;margin-bottom:8px">DELIVERY ITEMS (${items.length})</div>`;
+  html+=`<input id="item-photo-input-camera" type="file" accept="image/*" capture="environment" style="display:none">`;
+  html+=`<input id="item-photo-input-files" type="file" accept="image/*" multiple style="display:none">`;
+
+  for(const item of sorted){
+    const photos=APP.itemPhotoMap[item.id]||[];
+    const hasPhoto=photos.length>0;
+    const rowCls=hasPhoto?'row-green':'row-red';
+    const camDisabled=photos.length>=10?'disabled':'';
+    const meta=[];
+    if(item.pageNumber)meta.push(`p.${item.pageNumber}`);
+    meta.push(`Qty: ${item.qtyExpected}`);
+    if(hasPhoto)meta.push(`<span style="color:var(--green)">📷${photos.length}</span>`);
+    html+=`<div class="result-row ${rowCls}">
+      <div class="row-header" style="padding:10px 12px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${hasPhoto?'✅ ':''}<span>${item.name}</span></div>
+          <div style="font-size:11px;color:var(--text2);margin-top:3px">${meta.join(' · ')}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px">
+          <button class="btn-camera" data-item-photo="${item.id}" data-use-camera="true" ${camDisabled}>${icon('camera',16)}</button>
+          <button class="btn-camera" data-item-photo="${item.id}" data-use-camera="false" style="background:#1e4d38;padding:8px 10px;font-size:13px" ${camDisabled}>📎</button>
+        </div>
+      </div>
+      ${photos.length?`<div class="photo-strip">${photos.map(url=>`<img class="photo-thumb" src="${url}" data-view-photo="${url}">`).join('')}</div>`:''}
+    </div>`;
+  }
+
+  html+=`<button id="continue-to-pos-btn" class="btn btn-primary" style="width:100%;padding:16px;font-size:15px;font-weight:700;margin-top:12px">
+    Continue to POS Check →
+  </button>`;
+
+  if(APP.viewingPhoto){
+    html+=`<div class="photo-modal" id="photo-modal">
+      <button class="photo-modal-close" id="photo-modal-close">✕</button>
+      <img src="${APP.viewingPhoto}">
+    </div>`;
+  }
+
+  if(APP.photoAnalysisModal){
+    const {blobUrl,analyzing,results}=APP.photoAnalysisModal;
+    html+=`<div class="analysis-modal" id="analysis-modal">
+      <button class="photo-modal-close" id="analysis-modal-close" style="position:fixed">✕</button>
+      <div class="analysis-modal-inner">
+        <img src="${blobUrl}" style="max-width:100%;max-height:220px;border-radius:10px;object-fit:contain">
+        ${analyzing?`<div style="color:var(--text2);padding:20px;text-align:center"><span class="spinner" style="font-size:24px">⟳</span><br><span style="font-size:13px;margin-top:8px;display:block">Analyzing items in photo...</span></div>`:''}
+        ${results?`<div style="width:100%">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">Items in this photo:</div>
+          ${results.map(r=>`<div class="analysis-result-row" style="background:${r.visible?'#52b78815':'#ffffff08'};margin-bottom:4px">
+            <span style="flex-shrink:0;font-size:15px">${r.visible?'✅':'❓'}</span>
+            <div>
+              <div style="font-weight:600;color:${r.visible?'var(--green)':'var(--text2)'}">${r.name} <span style="font-weight:400;color:var(--text3)">${r.confidence}%</span></div>
+              <div style="color:var(--text3);margin-top:2px;font-size:11px">${r.reason}</div>
+            </div>
+          </div>`).join('')}
+        </div>`:''}
+      </div>
+    </div>`;
+  }
+
+  html+=`</div>`;
+  return html;
+}
+
+/* ═══════════════════════════════════════════════════ */
+/*  STEP 2: POS MATCHING                               */
+/* ═══════════════════════════════════════════════════ */
+function renderPOSStep(){
+  const allItems=APP.results||[];
+  const aliases=APP.posData?.aliases||{};
+  const q=APP.resultsSearch.trim();
+  const filtered=q?allItems.filter(i=>{
+    if(fuzzyScore(q,i.name)>=50)return true;
+    if(i.posName&&fuzzyScore(q,i.posName)>=50)return true;
+    for(const[label,code] of Object.entries(aliases)){
+      if(code===i.posCode&&fuzzyScore(q,label)>=50)return true;
+    }
+    return false;
+  }):allItems;
+  const baseItems=APP.issuesOnly?filtered.filter(i=>i.confidence<80&&!i.learned):filtered;
+
+  const strong=allItems.filter(i=>i.confidence>=80||i.learned).length;
+  const uncertain=allItems.filter(i=>i.confidence>=45&&i.confidence<80&&!i.learned).length;
+  const newItems=allItems.filter(i=>i.confidence<45).length;
+  const supplier=APP.selectedSupplier||'';
+  // Find which POS supplier section was used (from first matched item)
+  const posSupSection=allItems.find(i=>i.posSupplier)?.posSupplier||'';
+
+  let html=`<div style="padding-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div>
+        <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">STEP 2 OF 2</div>
+        <h2 style="font-size:18px;font-weight:700;margin:0">🔍 POS Matching</h2>
+        ${supplier?`<p style="font-size:12px;color:var(--text3);margin:2px 0 0">${supplier}${posSupSection?` · POS section: <b style="color:var(--green)">${posSupSection}</b>`:''}</p>`:''}
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost" id="back-to-verify-btn" style="padding:6px 10px;font-size:12px">← Photos</button>
+        <button class="btn btn-ghost" id="pos-new-btn" style="padding:6px 10px;font-size:12px">New</button>
+      </div>
+    </div>
+    <div class="step-bar"><div class="step-pill done"></div><div class="step-pill active"></div></div>
+
+    <div class="stats">
+      <div class="stat"><div class="stat-val">${allItems.length}</div><div class="stat-label">Total</div></div>
+      <div class="stat"><div class="stat-val" style="color:var(--green)">${strong}</div><div class="stat-label">✅ Strong</div></div>
+      <div class="stat"><div class="stat-val" style="color:var(--amber)">${uncertain}</div><div class="stat-label">⚠️ Fuzzy</div></div>
+      <div class="stat"><div class="stat-val" style="color:var(--red)">${newItems}</div><div class="stat-label">❌ New</div></div>
+    </div>
+
+    <details style="margin-bottom:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--text2)">
+      <summary style="cursor:pointer;font-weight:600;color:var(--text);list-style:none">▾ POS Match Key</summary>
+      <div style="margin-top:8px;display:grid;gap:4px">
+        <div>✅ <b>Strong</b> (≥80%) — Idealpos item found with high confidence</div>
+        <div>⚠️ <b>Fuzzy</b> (45–79%) — possible match, verify before accepting</div>
+        <div>❌ <b>Not found</b> (<45%) — may be a new item or naming differs greatly</div>
+      </div>
+    </details>
+
+    <div style="margin-bottom:10px;position:relative">
+      <input id="results-search" class="input" placeholder="Search by name or Idealpos name..." value="${APP.resultsSearch}" style="padding-left:32px;font-size:12px">
+      <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none;opacity:.5">${icon('search',14)}</span>
+      ${q?`<span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text3)">${filtered.length}/${allItems.length}</span>`:''}
+    </div>
+    <div class="action-bar">
+      <button class="btn ${APP.issuesOnly?'':'btn-ghost'}" id="toggle-issues" style="${APP.issuesOnly?'background:#e5a10022;border:1px solid var(--amber);color:var(--amber)':''}">
+        ${icon('filter',14)} ${APP.issuesOnly?'All':'Issues Only'}
+      </button>
+      <button class="btn btn-ghost" id="pos-entry-btn" style="color:var(--green)">${icon('zap',12)} POS Mode</button>
+      <button class="btn btn-ghost" id="export-btn">${icon('download',14)} CSV</button>
+    </div>`;
+
+  html+=`<input id="item-photo-input-camera" type="file" accept="image/*" capture="environment" style="display:none">`;
+  html+=`<input id="item-photo-input-files" type="file" accept="image/*" multiple style="display:none">`;
+
+  for(const item of baseItems){
+    const isDmg=item.damaged;
+    const photos=APP.itemPhotoMap[item.id]||[];
+    const hasPhoto=photos.length>0;
+    const expanded=APP.expandedRows.has(item.id);
+    const posInd=item.confidence>=80||item.learned?'✅':item.confidence>=45?'⚠️':'❌';
+    const confColor=item.confidence>=80?'var(--green)':item.confidence>=45?'var(--amber)':'var(--red)';
+    let rowCls=item.confidence>=80||item.learned?'row-green':item.confidence>=45?'row-yellow':'row-red';
+    if(isDmg)rowCls='damaged';
+    const meta=[];
+    if(item.supplierCode)meta.push(`<span style="color:var(--text3)">Ref:${item.supplierCode}</span>`);
+    if(item.pageNumber)meta.push(`p.${item.pageNumber}`);
+    meta.push(`Qty:${item.qtyExpected}`);
+    if(item.posCode)meta.push(`POS:<b style="color:var(--green);font-family:var(--font-mono)">${item.posCode}</b>`);
+    meta.push(`<span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span>`);
+    if(hasPhoto)meta.push(`<span style="color:var(--green)">📷${photos.length}</span>`);
+    const camDisabled=photos.length>=10?'disabled':'';
+
+    html+=`<div class="result-row ${rowCls}">
+      <div class="row-header">
+        <div class="row-header-tap" data-toggle-row="${item.id}" style="min-width:0;flex:1">
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+            <span style="font-size:15px;flex-shrink:0">${posInd}</span>
+            <span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);padding-left:20px;flex-wrap:wrap;display:flex;gap:6px">${meta.join(' · ')}</div>
+          ${item.posName?`<div style="font-size:11px;color:var(--text3);padding-left:20px;margin-top:1px">→ ${item.posName}</div>`:''}
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px">
+          <button class="btn-camera" data-item-photo="${item.id}" data-use-camera="true" ${camDisabled}>${icon('camera',16)}</button>
+          <button class="btn-camera" data-item-photo="${item.id}" data-use-camera="false" style="background:#1e4d38;padding:8px 10px;font-size:13px" ${camDisabled}>📎</button>
+        </div>
+      </div>`;
+
+    // Inline error/warning for uncertain matches
+    if(!item.learned&&item.confidence<80){
+      let msg='',bg='',border='',col='';
+      if(item.confidence<45){
+        col='var(--red)';bg='#f4433612';border='#f4433630';
+        msg=item.posName
+          ?`No reliable match. Best candidate: "<b>${item.posName}</b>" at ${pct(item.confidence)} — confidence too low. Check your stocklist or enter the POS code manually.`
+          :`Item not found in Idealpos stocklist. May be a new item or the name is very different from POS naming.`;
+      }else{
+        col='var(--amber)';bg='#e5a10012';border='#e5a10030';
+        msg=`Uncertain match at ${pct(item.confidence)}. Delivery name and Idealpos name look different — tap to expand and verify, then confirm or add an alias.`;
+      }
+      html+=`<div style="margin:0 12px 8px;padding:7px 10px;background:${bg};border:1px solid ${border};border-radius:6px;font-size:11px;color:${col};line-height:1.5">${item.confidence<45?'❌':'⚠️'} ${msg}</div>`;
+    }
+
+    if(photos.length){
+      html+=`<div class="photo-strip">${photos.map(url=>`<img class="photo-thumb" src="${url}" data-view-photo="${url}">`).join('')}</div>`;
+    }
+
+    if(expanded){
+      const existingAlias=Object.entries(APP.posData?.aliases||{}).find(([,code])=>code===item.posCode);
+      html+=`<div class="row-details"><div style="padding-top:10px;display:grid;gap:8px;font-size:12px">
+        <div><span style="color:var(--text3)">Idealpos:</span> ${item.posName||'—'} <span style="font-family:var(--font-mono);color:var(--green)">${item.posCode?`(${item.posCode})`:''}</span></div>
+        <div><span style="color:var(--text3)">Match:</span> <span style="color:${confColor};font-weight:600">${pct(item.confidence)}</span> <span style="color:var(--text3);font-size:10px">${item.aliased?'via alias':item.learned?'learned':'fuzzy'}</span></div>
+        ${item.posCode?`<div style="display:flex;gap:6px;align-items:center">
+          <input class="input" data-alias-input="${item.id}" placeholder="Save alias (e.g. 'Coke 2L')" value="${existingAlias?existingAlias[0]:''}" style="font-size:11px;padding:6px 8px;flex:1">
+          <button class="btn btn-ghost" data-save-alias="${item.id}" style="font-size:11px;padding:6px 10px">Save Alias</button>
+        </div>`:''}
+        <div style="display:flex;gap:8px">
+          <button class="btn ${isDmg?'btn-danger':'btn-ghost'}" data-toggle-dmg="${item.id}" style="flex:1;font-size:12px">${icon('flag',12)} ${isDmg?'Unflag':'Flag Damage'}</button>
+          ${item.confidence>=45&&item.confidence<95&&!item.learned&&!item.aliased?`<button class="btn" data-confirm-match="${item.id}" style="background:#2d6a4f22;border:1px solid var(--green-dark);color:var(--green);font-size:12px">${icon('check',12)} Confirm match</button>`:''}
+        </div>
+        ${isDmg?`<input class="input" data-dmg-note="${item.id}" placeholder="Damage notes..." value="${item.damageNote||''}" style="font-size:12px;padding:8px 10px;border-color:#f4433644">`:''}
+        ${item.status==='NEW ITEM'?`<input class="input" data-manual-note="${item.id}" placeholder="Manual POS code or notes..." value="${item.manualNotes||''}" style="font-size:12px;padding:8px 10px;font-family:var(--font-mono);border-color:#e5a10044">`:''}
+        ${photos.length?`<div style="display:flex;flex-wrap:wrap;gap:4px">${photos.map((url,pi)=>`<button class="btn btn-ghost" data-rm-item-photo="${item.id}" data-photo-idx="${pi}" style="font-size:10px;padding:4px 8px;color:var(--red)">✕ Photo ${pi+1}</button>`).join('')}</div>`:''}
+      </div></div>`;
+    }
+    html+=`</div>`;
+  }
+
+  if(!baseItems.length){
+    html+=`<div style="text-align:center;padding:32px;color:var(--text3)">${APP.issuesOnly?'No issues found! All items matched strongly.':'No items to display.'}</div>`;
+  }
+
+  html+=`<button id="save-finish-btn" class="btn btn-primary" style="width:100%;padding:14px;font-size:14px;font-weight:600;margin-top:16px">${icon('check',16)} Save &amp; Finish</button>`;
+
+  if(APP.viewingPhoto){
+    html+=`<div class="photo-modal" id="photo-modal">
+      <button class="photo-modal-close" id="photo-modal-close">✕</button>
+      <img src="${APP.viewingPhoto}">
+    </div>`;
+  }
+
+  html+=`</div>`;
   return html;
 }
 
@@ -670,8 +1123,12 @@ function bindPage(){
   });
 
   if(APP.page==='delivery'){
-    if(APP.results||APP.viewingHistory){
+    if(APP.viewingHistory){
       bindResults();
+    }else if(APP.deliveryStep==='verify'&&APP.results){
+      bindVerifyStep();
+    }else if(APP.deliveryStep==='pos'&&APP.results){
+      bindPOSStep();
     }else{
       bindDeliveryForm();
     }
@@ -700,10 +1157,12 @@ function bindDeliveryForm(){
   document.querySelectorAll('[data-rm-report]').forEach(el=>{
     el.onclick=e=>{e.stopPropagation();APP.reportFiles.splice(+el.dataset.rmReport,1);render()}
   });
-  // Photo files
-  const photoBtn=$('#photo-add-btn');
-  if(photoBtn)photoBtn.onclick=()=>$('#photo-input').click();
+  // Item photos (pre-processing overview shots)
+  const photoCamBtn=$('#photo-add-btn');
+  const photoFileBtn=$('#photo-file-btn');
   const photoInput=$('#photo-input');
+  if(photoCamBtn)photoCamBtn.onclick=()=>{if(photoInput){photoInput.removeAttribute('capture');photoInput.setAttribute('capture','environment');photoInput.click()}};
+  if(photoFileBtn)photoFileBtn.onclick=()=>{if(photoInput){photoInput.removeAttribute('capture');photoInput.click()}};
   if(photoInput)photoInput.onchange=e=>{if(e.target.files.length){APP.itemPhotos.push(...Array.from(e.target.files));e.target.value='';render()}};
   document.querySelectorAll('[data-rm-photo]').forEach(el=>{
     el.onclick=e=>{e.stopPropagation();APP.itemPhotos.splice(+el.dataset.rmPhoto,1);render()}
@@ -726,12 +1185,19 @@ function bindDeliveryForm(){
 
 function bindResults(){
   const backBtn=$('#results-back-btn');
-  if(backBtn)backBtn.onclick=()=>{APP.results=null;APP.viewingHistory=null;APP.reportFiles=[];APP.itemPhotos=[];APP.scannedBarcodes=[];APP.deliveryNotes='';APP.selectedSupplier='';APP.issuesOnly=false;APP.expandedRows.clear();render()};
+  if(backBtn)backBtn.onclick=()=>{APP.viewingHistory=null;resetDelivery();render()};
   const togIssues=$('#toggle-issues');
   if(togIssues)togIssues.onclick=()=>{APP.issuesOnly=!APP.issuesOnly;render()};
   const posBtn=$('#pos-entry-btn');
   if(posBtn)posBtn.onclick=()=>{APP.showPOSEntry=true;render()};
   const expBtn=$('#export-btn');
+  // Bulk photo button — adds to itemPhotos (overview shots, not per item)
+  const bulkPhotoBtn=$('#bulk-photo-btn');
+  const bulkPhotoInput=$('#bulk-photo-input');
+  if(bulkPhotoBtn)bulkPhotoBtn.onclick=()=>{if(bulkPhotoInput)bulkPhotoInput.click()};
+  if(bulkPhotoInput)bulkPhotoInput.onchange=e=>{
+    if(e.target.files.length){APP.itemPhotos.push(...Array.from(e.target.files));e.target.value='';render()}
+  };
   if(expBtn)expBtn.onclick=()=>{const items=APP.results||APP.viewingHistory?.items||[];const notes=APP.deliveryNotes||APP.viewingHistory?.notes||'';downloadCSV(items,notes,APP.selectedSupplier||APP.viewingHistory?.supplier)};
   // Row toggles
   document.querySelectorAll('[data-toggle-row]').forEach(el=>{
@@ -763,6 +1229,224 @@ function bindResults(){
   document.querySelectorAll('[data-manual-note]').forEach(el=>{
     el.oninput=()=>{const id=el.dataset.manualNote;const items=APP.results||APP.viewingHistory?.items||[];const item=items.find(i=>i.id===id);if(item)item.manualNotes=el.value}
   });
+  // Search bar
+  const srch=$('#results-search');
+  if(srch){srch.oninput=()=>{APP.resultsSearch=srch.value;render()};srch.focus&&srch.blur()}
+
+  // Per-item attachment — two inputs: camera (capture) and file picker
+  let currentCameraItemId=null;
+  const addPhotos=async(files,itemId)=>{
+    if(!itemId||!files.length)return;
+    if(!APP.itemPhotoMap[itemId])APP.itemPhotoMap[itemId]=[];
+    const slots=10-APP.itemPhotoMap[itemId].length;
+    const toAdd=Array.from(files).slice(0,slots);
+    for(const f of toAdd){APP.itemPhotoMap[itemId].push(URL.createObjectURL(f))}
+    render();
+  };
+  const camInput=$('#item-photo-input-camera');
+  const fileInput=$('#item-photo-input-files');
+  if(camInput){camInput.onchange=e=>{addPhotos(e.target.files,currentCameraItemId);e.target.value=''}}
+  if(fileInput){fileInput.onchange=e=>{addPhotos(e.target.files,currentCameraItemId);e.target.value=''}}
+  document.querySelectorAll('[data-item-photo]').forEach(el=>{
+    el.onclick=e=>{
+      e.stopPropagation();
+      currentCameraItemId=el.dataset.itemPhoto;
+      const useCamera=el.dataset.useCamera==='true';
+      if(useCamera&&camInput)camInput.click();
+      else if(fileInput)fileInput.click();
+    }
+  });
+  // Remove individual photo
+  document.querySelectorAll('[data-rm-item-photo]').forEach(el=>{
+    el.onclick=e=>{
+      e.stopPropagation();
+      const id=el.dataset.rmItemPhoto;const idx=+el.dataset.photoIdx;
+      const arr=APP.itemPhotoMap[id];if(!arr)return;
+      URL.revokeObjectURL(arr[idx]);arr.splice(idx,1);
+      if(!arr.length)delete APP.itemPhotoMap[id];
+      render();
+    }
+  });
+  // Save alias
+  document.querySelectorAll('[data-save-alias]').forEach(el=>{
+    el.onclick=e=>{
+      e.stopPropagation();
+      const id=el.dataset.saveAlias;
+      const inp=document.querySelector(`[data-alias-input="${id}"]`);
+      if(!inp||!APP.posData)return;
+      const label=inp.value.trim();
+      const allItems=APP.results||[];
+      const item=allItems.find(i=>i.id===id);
+      if(!item||!item.posCode)return;
+      if(!APP.posData.aliases)APP.posData.aliases={};
+      // Remove any old alias for this POS code
+      for(const k of Object.keys(APP.posData.aliases)){
+        if(APP.posData.aliases[k]===item.posCode)delete APP.posData.aliases[k];
+      }
+      if(label)APP.posData.aliases[normalize(label)]=item.posCode;
+      store.set('pos-data',APP.posData);
+      item.aliased=!!label;
+      render();
+    }
+  });
+  // Photo thumbnails → open modal
+  document.querySelectorAll('[data-view-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();APP.viewingPhoto=el.dataset.viewPhoto;render()}
+  });
+  // Modal close
+  const modalClose=$('#photo-modal-close');
+  if(modalClose)modalClose.onclick=()=>{APP.viewingPhoto=null;render()};
+  const modal=$('#photo-modal');
+  if(modal)modal.onclick=e=>{if(e.target===modal){APP.viewingPhoto=null;render()}}
+}
+
+/* ── Reset delivery state ── */
+function resetDelivery(){
+  Object.values(APP.itemPhotoMap).flat().forEach(url=>{try{URL.revokeObjectURL(url)}catch{}});
+  APP.results=null;APP.deliveryStep='form';
+  APP.reportFiles=[];APP.itemPhotos=[];APP.scannedBarcodes=[];
+  APP.deliveryNotes='';APP.selectedSupplier='';
+  APP.issuesOnly=false;APP.expandedRows.clear();APP.itemPhotoMap={};
+  APP.viewingPhoto=null;APP.resultsSearch='';
+  APP.bulkPhotoResults={};APP.photoAnalysisModal=null;
+}
+
+/* ── Bind Verify Step ── */
+function bindVerifyStep(){
+  const newBtn=$('#verify-new-btn');
+  if(newBtn)newBtn.onclick=()=>{resetDelivery();render()};
+  const contBtn=$('#continue-to-pos-btn');
+  if(contBtn)contBtn.onclick=()=>{APP.deliveryStep='pos';APP.resultsSearch='';render()};
+
+  // Bulk photo add
+  const bulkAddBtn=$('#bulk-add-btn');
+  const bulkInput=$('#bulk-photo-input');
+  if(bulkAddBtn&&bulkInput)bulkAddBtn.onclick=()=>bulkInput.click();
+  if(bulkInput)bulkInput.onchange=e=>{if(e.target.files.length){APP.itemPhotos.push(...Array.from(e.target.files));e.target.value='';render()}};
+
+  // Analyze photo on tap
+  document.querySelectorAll('[data-analyze-photo]').forEach(el=>{
+    el.onclick=()=>{
+      const idx=+el.dataset.analyzePhoto;
+      if(APP.bulkPhotoResults[idx]){
+        const url=URL.createObjectURL(APP.itemPhotos[idx]);
+        APP.photoAnalysisModal={photoIdx:idx,blobUrl:url,analyzing:false,results:APP.bulkPhotoResults[idx]};
+        render();
+      }else{
+        analyzePhotoItems(idx);
+      }
+    }
+  });
+
+  // Per-item photos
+  let currentItemId=null;
+  const addPhotos=(files,itemId)=>{
+    if(!itemId||!files.length)return;
+    if(!APP.itemPhotoMap[itemId])APP.itemPhotoMap[itemId]=[];
+    const slots=10-APP.itemPhotoMap[itemId].length;
+    Array.from(files).slice(0,slots).forEach(f=>APP.itemPhotoMap[itemId].push(URL.createObjectURL(f)));
+    render();
+  };
+  const camInput=$('#item-photo-input-camera');
+  const fileInput=$('#item-photo-input-files');
+  if(camInput)camInput.onchange=e=>{addPhotos(e.target.files,currentItemId);e.target.value=''};
+  if(fileInput)fileInput.onchange=e=>{addPhotos(e.target.files,currentItemId);e.target.value=''};
+  document.querySelectorAll('[data-item-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();currentItemId=el.dataset.itemPhoto;
+      el.dataset.useCamera==='true'?camInput?.click():fileInput?.click()}
+  });
+
+  // Photo modal
+  document.querySelectorAll('[data-view-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();APP.viewingPhoto=el.dataset.viewPhoto;render()}
+  });
+  const mc=$('#photo-modal-close');if(mc)mc.onclick=()=>{APP.viewingPhoto=null;render()};
+  const pm=$('#photo-modal');if(pm)pm.onclick=e=>{if(e.target===pm){APP.viewingPhoto=null;render()}};
+
+  // Analysis modal close
+  const ac=$('#analysis-modal-close');if(ac)ac.onclick=()=>{APP.photoAnalysisModal=null;render()};
+  const am=$('#analysis-modal');if(am)am.onclick=e=>{if(e.target===am){APP.photoAnalysisModal=null;render()}};
+}
+
+/* ── Bind POS Step ── */
+function bindPOSStep(){
+  $('#back-to-verify-btn')?.addEventListener('click',()=>{APP.deliveryStep='verify';render()});
+  $('#pos-new-btn')?.addEventListener('click',()=>{resetDelivery();render()});
+  $('#toggle-issues')?.addEventListener('click',()=>{APP.issuesOnly=!APP.issuesOnly;render()});
+  $('#pos-entry-btn')?.addEventListener('click',()=>{APP.showPOSEntry=true;render()});
+  $('#export-btn')?.addEventListener('click',()=>downloadCSV(APP.results||[],APP.deliveryNotes,APP.selectedSupplier));
+  $('#save-finish-btn')?.addEventListener('click',()=>{
+    // Update history record (remove same-session duplicate if any, then add updated)
+    const now=new Date().toISOString();
+    APP.history=APP.history.filter(h=>!(h.supplier===(APP.selectedSupplier||'Unknown')&&Math.abs(new Date(h.date)-new Date())<300000));
+    const record={id:uid(),date:now,supplier:APP.selectedSupplier||'Unknown',
+      notes:APP.deliveryNotes,items:APP.results||[],
+      itemCount:(APP.results||[]).length,issueCount:(APP.results||[]).filter(i=>i.status!=='Matched').length};
+    APP.history.unshift(record);store.set('history',APP.history);
+    resetDelivery();render();
+  });
+
+  const srch=$('#results-search');
+  if(srch)srch.oninput=()=>{APP.resultsSearch=srch.value;render()};
+
+  document.querySelectorAll('[data-toggle-row]').forEach(el=>{
+    el.onclick=()=>{const id=el.dataset.toggleRow;APP.expandedRows.has(id)?APP.expandedRows.delete(id):APP.expandedRows.add(id);render()}
+  });
+  document.querySelectorAll('[data-toggle-dmg]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();const id=el.dataset.toggleDmg;
+      const item=(APP.results||[]).find(i=>i.id===id);if(!item)return;
+      item.damaged=!item.damaged;item.status=item.damaged?'Damaged':(item.confidence<45?'NEW ITEM':'Matched');render()}
+  });
+  document.querySelectorAll('[data-confirm-match]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();const id=el.dataset.confirmMatch;
+      const item=(APP.results||[]).find(i=>i.id===id);if(!item||!item.posCode||!APP.selectedSupplier)return;
+      const sup=APP.suppliers.find(s=>s.name===APP.selectedSupplier);if(!sup)return;
+      if(!sup.mappings)sup.mappings={};
+      sup.mappings[normalize(item.name)]=item.posCode;item.learned=true;store.set('suppliers',APP.suppliers);render()}
+  });
+  document.querySelectorAll('[data-dmg-note]').forEach(el=>{
+    el.oninput=()=>{const item=(APP.results||[]).find(i=>i.id===el.dataset.dmgNote);if(item)item.damageNote=el.value}
+  });
+  document.querySelectorAll('[data-manual-note]').forEach(el=>{
+    el.oninput=()=>{const item=(APP.results||[]).find(i=>i.id===el.dataset.manualNote);if(item)item.manualNotes=el.value}
+  });
+  document.querySelectorAll('[data-save-alias]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();const id=el.dataset.saveAlias;
+      const inp=document.querySelector(`[data-alias-input="${id}"]`);if(!inp||!APP.posData)return;
+      const label=inp.value.trim();const item=(APP.results||[]).find(i=>i.id===id);if(!item||!item.posCode)return;
+      if(!APP.posData.aliases)APP.posData.aliases={};
+      for(const k of Object.keys(APP.posData.aliases)){if(APP.posData.aliases[k]===item.posCode)delete APP.posData.aliases[k]}
+      if(label)APP.posData.aliases[normalize(label)]=item.posCode;
+      store.set('pos-data',APP.posData);item.aliased=!!label;render()}
+  });
+
+  // Per-item photos
+  let currentItemId=null;
+  const addPhotos=(files,itemId)=>{
+    if(!itemId||!files.length)return;
+    if(!APP.itemPhotoMap[itemId])APP.itemPhotoMap[itemId]=[];
+    const slots=10-APP.itemPhotoMap[itemId].length;
+    Array.from(files).slice(0,slots).forEach(f=>APP.itemPhotoMap[itemId].push(URL.createObjectURL(f)));
+    render();
+  };
+  const camInput=$('#item-photo-input-camera');
+  const fileInput=$('#item-photo-input-files');
+  if(camInput)camInput.onchange=e=>{addPhotos(e.target.files,currentItemId);e.target.value=''};
+  if(fileInput)fileInput.onchange=e=>{addPhotos(e.target.files,currentItemId);e.target.value=''};
+  document.querySelectorAll('[data-item-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();currentItemId=el.dataset.itemPhoto;
+      el.dataset.useCamera==='true'?camInput?.click():fileInput?.click()}
+  });
+  document.querySelectorAll('[data-rm-item-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();const id=el.dataset.rmItemPhoto;const idx=+el.dataset.photoIdx;
+      const arr=APP.itemPhotoMap[id];if(!arr)return;
+      URL.revokeObjectURL(arr[idx]);arr.splice(idx,1);if(!arr.length)delete APP.itemPhotoMap[id];render()}
+  });
+  document.querySelectorAll('[data-view-photo]').forEach(el=>{
+    el.onclick=e=>{e.stopPropagation();APP.viewingPhoto=el.dataset.viewPhoto;render()}
+  });
+  const mc=$('#photo-modal-close');if(mc)mc.onclick=()=>{APP.viewingPhoto=null;render()};
+  const pm=$('#photo-modal');if(pm)pm.onclick=e=>{if(e.target===pm){APP.viewingPhoto=null;render()}};
 }
 
 function bindHistory(){
@@ -825,48 +1509,122 @@ function bindSettings(){
 /*  CORE LOGIC                                         */
 /* ═══════════════════════════════════════════════════ */
 
+/* Analyze bulk photo — identify which delivery items are visible */
+async function analyzePhotoItems(photoIdx){
+  const file=APP.itemPhotos[photoIdx];
+  if(!file)return;
+  const blobUrl=URL.createObjectURL(file);
+  APP.photoAnalysisModal={photoIdx,blobUrl,analyzing:true,results:null};
+  render();
+  try{
+    const items=APP.results||[];
+    const itemList=items.map((it,i)=>`${i+1}. ${it.name}${it.pageNumber?` (p.${it.pageNumber})`:''}${it.qtyExpected?' ×'+it.qtyExpected:''}`).join('\n');
+    const b64=await resizeImage(file);
+    const data=await callClaude(APP.apiKey,[{role:'user',content:[
+      {type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}},
+      {type:'text',text:`Delivery items list:
+${itemList}
+
+Check this photo for those items. For each item say if it is visible.
+Output ONLY a raw JSON array, no markdown, no explanation outside JSON:
+[{"name":"item name","visible":true,"confidence":80,"reason":"why certain or uncertain"},...]
+Include every item from the list.`}
+    ]}],'Output only a raw JSON array. No markdown fences, no text outside the JSON.',6000);
+    const raw=data.content.map(c=>c.text||'').join('');
+    // Robust extraction: strip markdown, find outermost [ ]
+    const stripped=raw.replace(/```[a-z]*\n?/g,'').replace(/```/g,'').trim();
+    const s=stripped.indexOf('['),e=stripped.lastIndexOf(']');
+    let results;
+    try{
+      if(s>=0&&e>s)results=JSON.parse(stripped.slice(s,e+1));
+      else results=JSON.parse(stripped);
+    }catch(pe){
+      throw new Error(`Parse failed (${pe.message}). Raw: ${stripped.slice(0,200)}`);
+    }
+    // Auto-confirm items clearly visible with high confidence
+    for(const r of results){
+      if(r.visible&&r.confidence>=65){
+        const match=items.find(i=>fuzzyScore(r.name,i.name)>=70);
+        if(match&&!(APP.itemPhotoMap[match.id]||[]).length){
+          if(!APP.itemPhotoMap[match.id])APP.itemPhotoMap[match.id]=[];
+          APP.itemPhotoMap[match.id].push(blobUrl);
+        }
+      }
+    }
+    APP.bulkPhotoResults[photoIdx]=results;
+    APP.photoAnalysisModal={photoIdx,blobUrl,analyzing:false,results};
+  }catch(err){
+    APP.photoAnalysisModal={...APP.photoAnalysisModal,analyzing:false,
+      results:[{name:'Analysis failed',visible:false,confidence:0,reason:err.message}]};
+  }
+  render();
+}
+
 /* Parse POS PDF */
 async function parsePOSPdf(file){
   APP.processing=true;APP.processStep='Loading PDF...';render();
   try{
-    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    const arrayBuffer=await file.arrayBuffer();
-    const pdf=await pdfjsLib.getDocument({data:arrayBuffer}).promise;
+    // Disable worker to avoid cross-origin worker fetch issues on Android content:// URIs
+    pdfjsLib.GlobalWorkerOptions.workerSrc='';
+    let arrayBuffer;
+    try{arrayBuffer=await file.arrayBuffer()}catch(e){throw new Error('Reading file failed: '+e.message)}
+    let pdf;
+    try{pdf=await pdfjsLib.getDocument({data:arrayBuffer,disableWorker:true}).promise}catch(e){throw new Error('PDF load failed: '+e.message)}
     const totalPages=pdf.numPages;
 
-    // Render every page to a JPEG image
-    const images=[];
-    for(let i=1;i<=totalPages;i++){
-      APP.processStep=`Rendering page ${i}/${totalPages}...`;render();
-      const page=await pdf.getPage(i);
-      const vp=page.getViewport({scale:1.5});
-      const canvas=document.createElement('canvas');
-      canvas.width=vp.width;canvas.height=vp.height;
-      await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
-      images.push(canvas.toDataURL('image/jpeg',0.75).split(',')[1]);
-    }
-
-    // Send in batches of 50 pages, merge results
-    const BATCH=50;
+    // Extract text and parse with regex — no API calls needed for structured stocklist data
+    APP.processStep=`Parsing stocklist...`;render();
     const allItems=[];
-    const totalBatches=Math.ceil(images.length/BATCH);
-    for(let b=0;b<images.length;b+=BATCH){
-      const chunk=images.slice(b,b+BATCH);
-      const batchNum=Math.floor(b/BATCH)+1;
-      APP.processStep=`AI parsing ${batchNum}/${totalBatches}...`;render();
-      const content=chunk.map(img=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:img}}));
-      content.push({type:'text',text:`These are pages from an Idealpos POS stocklist. Extract EVERY item row. Each item row has columns: Code (numeric), Description (text), and other columns. Items are grouped under supplier/category headings — SKIP heading rows, extract ONLY item rows. Return ONLY a JSON array of objects with "code" (string) and "description" (string). No markdown, no explanation, just the raw JSON array.`});
-      const data=await callClaude(APP.apiKey,[{role:'user',content}],'You are a data extraction assistant. Return only valid JSON, no markdown fences, no explanation.');
-      const text=data.content.map(c=>c.text||'').join('');
-      const clean=text.replace(/```json|```/g,'').trim();
-      let batchItems;
-      try{batchItems=JSON.parse(clean)}catch{const m=clean.match(/\[[\s\S]*\]/);if(m)batchItems=JSON.parse(m[0]);else throw new Error('Could not parse batch '+batchNum)}
-      allItems.push(...batchItems);
-    }
-
-    // Deduplicate by code, keeping first occurrence
     const seen=new Set();
-    const items=allItems.filter(it=>{if(seen.has(it.code))return false;seen.add(it.code);return true});
+    // Idealpos rows: numeric code (3-7 digits) followed by description text
+    const itemRow=/^\s*(\d{3,7})\s{1,6}([A-Za-z][^\t\n]{2,80}?)(?:\s{2,}|\t|$)/;
+    // Supplier section headers: lines that look like a company name (no leading number, no prices)
+    const supplierHeader=/^([A-Z][A-Za-z0-9\s&'.,/()-]{2,50})$/;
+    let currentSupplier='';
+    for(let i=1;i<=totalPages;i++){
+      if(i%20===0){APP.processStep=`Parsing page ${i}/${totalPages}...`;render()}
+      const page=await pdf.getPage(i);
+      const tc=await page.getTextContent();
+      // Group text items by y-position, tracking x-positions to split columns
+      const rows={};
+      for(const item of tc.items){
+        if(!item.str.trim())continue;
+        const y=Math.round(item.transform[5]);
+        const x=Math.round(item.transform[4]);
+        if(!rows[y])rows[y]={startX:x,parts:[]};
+        rows[y].parts.push({x,text:item.str});
+      }
+      // Process rows top-to-bottom (higher y = higher on page in PDF coords)
+      for(const y of Object.keys(rows).map(Number).sort((a,b)=>b-a)){
+        const {startX,parts}=rows[y];
+        parts.sort((a,b)=>a.x-b.x);
+        // Full line for supplier header detection
+        const fullLine=parts.map(p=>p.text).join(' ').trim();
+        // Name columns only: exclude parts far to the right (price/qty columns)
+        // Use first 55% of page width relative to row start (heuristic for Idealpos)
+        const pageWidthGuess=500; // typical PDF page width in pts
+        const nameOnly=parts.filter(p=>p.x<startX+pageWidthGuess*0.55).map(p=>p.text).join(' ').trim();
+        const m=nameOnly.match(itemRow)||fullLine.match(itemRow);
+        if(m){
+          const code=m[1];
+          // Strip any trailing price data: decimal numbers with 2dp (e.g. "21.74 8596 75.00")
+          const desc=m[2].trim().replace(/\s+\d+\.\d{2}.*$/,'').replace(/\s{2,}.*$/,'').trim();
+          if(!seen.has(code)&&desc.length>1){seen.add(code);allItems.push({code,description:desc,supplier:currentSupplier})}
+        }else{
+          // Check for supplier section header (no leading number, looks like a company name)
+          const sh=fullLine.match(supplierHeader);
+          if(sh&&!fullLine.match(/^\d/)&&fullLine.length>=4&&fullLine.length<=52){
+            // Require at least 2 words or unusual length to avoid matching column headers
+            const words=fullLine.trim().split(/\s+/);
+            if(words.length>=2||(words.length===1&&fullLine.length>7)){
+              currentSupplier=fullLine.trim();
+            }
+          }
+        }
+      }
+    }
+    if(allItems.length===0)throw new Error('No items found — PDF may be scanned/image-based. Try a text-based export from Idealpos.');
+    const items=allItems;
     APP.posData={items,updatedAt:new Date().toISOString()};
     store.set('pos-data',APP.posData);
     store.set('skip-pos',true);
@@ -881,24 +1639,24 @@ async function processDelivery(){
   try{
     const content=[];
     for(const f of APP.reportFiles){
-      const b64=await fileToBase64(f);
       const isPdf=f.type.includes('pdf');
-      content.push(isPdf?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:f.type||'image/jpeg',data:b64}});
+      const b64=isPdf?await fileToBase64(f):await resizeImage(f);
+      content.push(isPdf?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}});
     }
     for(const f of APP.itemPhotos){
-      const b64=await fileToBase64(f);
-      content.push({type:'image',source:{type:'base64',media_type:f.type||'image/jpeg',data:b64}});
+      const b64=await resizeImage(f);
+      content.push({type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}});
     }
     const supProfile=APP.suppliers.find(s=>s.name===APP.selectedSupplier);
     const supContext=supProfile?`Supplier: ${supProfile.name}. Notes: ${supProfile.notes||'none'}.`:'';
-    content.push({type:'text',text:`Analyze this delivery. The first image(s)/document(s) are the supplier delivery report/invoice. ${APP.itemPhotos.length?'The remaining images show physical items received.':'No physical item photos provided.'}
+    content.push({type:'text',text:`Analyze this delivery report/invoice.${APP.itemPhotos.length?' The additional images are photos of the delivered items.':''}
 ${supContext}
 ${APP.scannedBarcodes.length?'Scanned barcodes: '+APP.scannedBarcodes.join(', '):''}
-Extract ALL line items from the delivery report with quantities.
-${APP.itemPhotos.length?'Then identify products visible in item photos and match them to delivery report items.':''}
-Return ONLY a JSON array with objects for EVERY delivery line item:
-{"name":"item name from delivery report","qtyExpected":number,"physicalMatch":true/false,"physicalNotes":"any condition notes"}
-Include EVERY line item. No markdown fences, just the raw JSON array.`});
+Extract ALL line items from the delivery report. Preserve the original order.
+Items often appear as "CODE - Product Name" (e.g. "225127 - Booty Cleanser") — separate the supplier code from the product name.
+Return ONLY a JSON array for EVERY line item (no markdown, no explanation):
+{"name":"clean product name only","supplierCode":"supplier code or empty string","qtyExpected":number,"pageNumber":page number this item appears on}
+Include EVERY line item.`});
 
     APP.processStep='AI analyzing delivery...';render();
     const data=await callClaude(APP.apiKey,[{role:'user',content}],
@@ -910,33 +1668,45 @@ Include EVERY line item. No markdown fences, just the raw JSON array.`});
 
     APP.processStep='Matching POS stocklist...';render();
     const mappings=supProfile?.mappings||{};
+    const aliases=APP.posData?.aliases||{};
+    // Narrow POS items to the supplier's section if the stocklist has supplier grouping
+    let allPosItems=APP.posData?.items||[];
+    let posItemsForMatch=allPosItems;
+    const supName=APP.selectedSupplier||'';
+    if(supName&&allPosItems.some(p=>p.supplier)){
+      const supFiltered=allPosItems.filter(p=>{
+        if(!p.supplier)return false;
+        return fuzzyScore(supName,p.supplier)>=50;
+      });
+      if(supFiltered.length>=3){
+        posItemsForMatch=supFiltered;
+        APP.processStep=`Matching against ${supFiltered.length} ${supName} POS items...`;render();
+      }
+    }
     const reconciled=items.map(item=>{
+      // Strip any leading "NNNNNN - " supplier code the AI may have left in the name
+      const cleanName=(item.name||'').replace(/^\d[\d\s]*[-–]\s*/,'').trim()||item.name||'';
+      const supplierCode=item.supplierCode||'';
+      const pageNumber=item.pageNumber||null;
       // Barcode match first
       let bcMatch=null;
-      if(APP.scannedBarcodes.length&&APP.posData?.items){
+      if(APP.scannedBarcodes.length&&allPosItems.length){
         for(const bc of APP.scannedBarcodes){
-          const pm=APP.posData.items.find(p=>p.code===bc);
-          if(pm&&fuzzyScore(item.name,pm.description)>40){bcMatch=pm;break}
+          const pm=allPosItems.find(p=>p.code===bc);
+          if(pm&&fuzzyScore(cleanName,pm.description)>40){bcMatch=pm;break}
         }
       }
-      const posMatch=bcMatch?{code:bcMatch.code,name:bcMatch.description,confidence:99}:findBestPOSMatch(item.name,APP.posData?.items||[],mappings);
-      const isNew=posMatch.confidence<70;
-      let status='Matched';
-      if(isNew)status='NEW ITEM';
-      else if(!item.physicalMatch&&APP.itemPhotos.length)status='Not Found';
-      return{id:uid(),name:item.name,qtyExpected:item.qtyExpected||0,physicalMatch:item.physicalMatch||false,
-        physicalNotes:item.physicalNotes||'',posCode:posMatch.code,posName:posMatch.name,confidence:posMatch.confidence,
-        status,damaged:false,damageNote:'',manualNotes:'',learned:posMatch.learned||false};
+      const posMatch=bcMatch?{code:bcMatch.code,name:bcMatch.description,confidence:99}:findBestPOSMatch(cleanName,posItemsForMatch,mappings,aliases);
+      const isNew=posMatch.confidence<45;
+      const status=isNew?'NEW ITEM':'Matched';
+      return{id:uid(),name:cleanName,supplierCode,pageNumber,qtyExpected:item.qtyExpected||0,
+        posCode:posMatch.code,posName:posMatch.name,confidence:posMatch.confidence,
+        status,damaged:false,damageNote:'',manualNotes:'',learned:posMatch.learned||false,
+        posSupplier:posItemsForMatch.find(p=>p.code===posMatch.code)?.supplier||''};
     });
 
     APP.results=reconciled;
-
-    // Save to history
-    const record={id:uid(),date:new Date().toISOString(),supplier:APP.selectedSupplier||'Unknown',
-      notes:APP.deliveryNotes,items:reconciled,itemCount:reconciled.length,
-      issueCount:reconciled.filter(i=>i.status!=='Matched').length};
-    APP.history.unshift(record);
-    store.set('history',APP.history);
+    APP.deliveryStep='verify'; // go to step 1: photo verification
   }catch(err){alert('Error: '+err.message)}
   finally{APP.processing=false;APP.processStep='';render()}
 }
