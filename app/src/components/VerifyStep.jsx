@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 import { callClaude } from '../lib/claude';
@@ -53,7 +53,7 @@ async function analyzePhotoItems(photoIdx, set, get, { autoOpen = true } = {}) {
     const b64 = await resizeImage(file, 1200, 0.80);
     const data = await callClaude(state.apiKey, [{ role: 'user', content: [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
-      { type: 'text', text: `Delivery items to find in this photo's foreground:\n${itemList}${suffix}\n\nForeground only — ignore anything through glass, in cabinets, or on background shelves.\n\nFor each distinct foreground item: match to list if ≥85% certain, otherwise use "UNIDENTIFIED". Include a bounding box.\n\n[{"name":"item name OR UNIDENTIFIED","visible":true,"foundCount":1,"expectedCount":1,"confidence":92,"reason":"exact text read from packaging","bbox":{"x":10,"y":20,"w":30,"h":25}},...]` },
+      { type: 'text', text: `Delivery items to find in this photo's foreground:\n${itemList}${suffix}\n\nForeground only — ignore anything through glass, in cabinets, or on background shelves.\n\nFor each distinct foreground item:\n- If you can read packaging text clearly (≥85% confident): use the exact name from the list above\n- If you CANNOT read it clearly: use name="UNIDENTIFIED" AND also provide suggestedName with your best guess from the list (based on shape, color, size)\n\nAlways include a bounding box and describe exactly what you physically see.\n\n[{"name":"item name from list OR UNIDENTIFIED","suggestedName":"best guess name from list if UNIDENTIFIED, else omit","visible":true,"foundCount":1,"expectedCount":1,"confidence":55,"reason":"describe color, shape, packaging exactly as you see it","bbox":{"x":10,"y":20,"w":30,"h":25}},...]` },
     ] }], SYSTEM_PROMPT, 2000);
 
     const raw = data.content.map(c => c.text || '').join('');
@@ -88,6 +88,35 @@ async function analyzePhotoItems(photoIdx, set, get, { autoOpen = true } = {}) {
       set({ photoAnalysisModal: { ...get().photoAnalysisModal, analyzing: false, results: [{ name: 'Analysis failed', visible: false, confidence: 0, reason: err.message }] } });
     }
   }
+}
+
+// Crops the source photo to a bounding box so the user sees exactly which item is being referenced
+function CroppedThumbnail({ blobUrl, bbox }) {
+  const [cropUrl, setCropUrl] = useState(null);
+  useEffect(() => {
+    if (!blobUrl || !bbox) return;
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const pad = Math.min(img.width, img.height) * 0.05;
+      const sx = Math.max(0, img.width * bbox.x / 100 - pad);
+      const sy = Math.max(0, img.height * bbox.y / 100 - pad);
+      const sw = Math.min(img.width * bbox.w / 100 + pad * 2, img.width - sx);
+      const sh = Math.min(img.height * bbox.h / 100 + pad * 2, img.height - sy);
+      const canvas = document.createElement('canvas');
+      canvas.width = sw; canvas.height = sh;
+      canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      if (!cancelled) setCropUrl(canvas.toDataURL('image/jpeg', 0.9));
+    };
+    img.src = blobUrl;
+    return () => { cancelled = true; };
+  }, [blobUrl, bbox?.x, bbox?.y, bbox?.w, bbox?.h]);
+
+  if (!cropUrl) return (
+    <div style={{ width: 76, height: 76, flexShrink: 0, borderRadius: 8, border: '2px dashed var(--amber)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, background: 'var(--bg)' }}>❓</div>
+  );
+  return <img src={cropUrl} alt="item crop" style={{ width: 76, height: 76, flexShrink: 0, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--amber)' }} />;
 }
 
 // Searchable picker used inside the analysis modal
@@ -229,35 +258,69 @@ function AnalysisModal() {
             {/* Needs manual assignment */}
             {needsReview.length > 0 && (
               <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)', marginBottom: 4, letterSpacing: '.5px' }}>❓ TAP BOX ON PHOTO OR SELECT BELOW ({needsReview.length})</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)', marginBottom: 6, letterSpacing: '.5px' }}>❓ NEEDS MANUAL ASSIGNMENT ({needsReview.length})</div>
                 {needsReview.map((r, i) => {
                   const idx = visibleItems.indexOf(r);
                   const pk = `list-${i}`;
                   const isOpen = openPicker === pk || openPicker === `bbox-${idx}`;
+                  const isUnidentified = r.name === 'UNIDENTIFIED';
+
+                  // Find the suggested item from remaining list if AI provided one
+                  const suggestedItem = r.suggestedName
+                    ? allRemaining.reduce((best, item) => {
+                        const s = fuzzyScore(r.suggestedName, item.name);
+                        return s > (best?.score || 0) ? { item, score: s } : best;
+                      }, null)
+                    : null;
+
                   return (
-                    <div key={i} style={{ marginBottom: 6 }}>
-                      <div className="analysis-result-row" style={{ background: '#e5a10015', alignItems: 'flex-start', marginBottom: 0 }}>
-                        <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 800, color: 'var(--amber)', minWidth: 18 }}>{idx + 1}</span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 600, color: 'var(--amber)', fontSize: 13 }}>
-                            {r.name === 'UNIDENTIFIED' ? 'Unidentified foreground item' : r.name}
-                            {r.name !== 'UNIDENTIFIED' && <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 11, marginLeft: 5 }}>{r.confidence}%</span>}
+                    <div key={i} style={{ marginBottom: 10, background: '#e5a10010', border: '1px solid #e5a10033', borderRadius: 10, overflow: 'hidden' }}>
+                      {/* Crop + description */}
+                      <div style={{ display: 'flex', gap: 10, padding: '10px 12px', alignItems: 'flex-start' }}>
+                        <CroppedThumbnail blobUrl={blobUrl} bbox={r.bbox} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)', marginBottom: 3 }}>
+                            Item {idx + 1} — {isUnidentified ? 'Cannot read packaging' : `Low confidence (${r.confidence}%)`}
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.4 }}>{r.reason}</div>
-                          <button
-                            style={{ marginTop: 5, padding: '4px 10px', background: isOpen ? 'var(--amber)' : '#e5a10022', border: '1px solid var(--amber)', color: isOpen ? '#000' : 'var(--amber)', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
-                            onClick={() => setOpenPicker(isOpen ? null : pk)}>
-                            ✎ {isOpen ? 'Close' : 'Select item...'}
-                          </button>
+                          <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.4 }}>{r.reason}</div>
                         </div>
                       </div>
+
+                      {/* AI suggestion (if provided) */}
+                      {suggestedItem && suggestedItem.score >= 40 && (
+                        <div style={{ padding: '8px 12px', borderTop: '1px solid #e5a10022' }}>
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 5 }}>AI best guess:</div>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <div style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>
+                              {suggestedItem.item.name}
+                              <span style={{ fontWeight: 400, color: 'var(--text3)', marginLeft: 6, fontSize: 11 }}>×{suggestedItem.item.qtyExpected}</span>
+                            </div>
+                            <button
+                              style={{ padding: '5px 14px', background: 'var(--green-dark)', border: 'none', color: '#fff', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                              onClick={() => handleAssign(suggestedItem.item)}>
+                              ✓ Yes
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Manual search */}
+                      <div style={{ padding: '6px 12px', borderTop: '1px solid #e5a10022' }}>
+                        <button
+                          style={{ width: '100%', padding: '7px 10px', background: isOpen ? '#e5a10033' : 'transparent', border: '1px solid #e5a10055', color: 'var(--amber)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
+                          onClick={() => setOpenPicker(isOpen ? null : pk)}>
+                          {isOpen ? '▲ Close search' : '🔍 Search all items...'}
+                        </button>
+                      </div>
                       {isOpen && (
-                        <ItemPicker
-                          searchHint={r.name === 'UNIDENTIFIED' ? '' : r.name}
-                          remainingItems={allRemaining}
-                          onSelect={handleAssign}
-                          onDismiss={() => setOpenPicker(null)}
-                        />
+                        <div style={{ borderTop: '1px solid #e5a10033' }}>
+                          <ItemPicker
+                            searchHint={r.suggestedName || ''}
+                            remainingItems={allRemaining}
+                            onSelect={handleAssign}
+                            onDismiss={() => setOpenPicker(null)}
+                          />
+                        </div>
                       )}
                     </div>
                   );
