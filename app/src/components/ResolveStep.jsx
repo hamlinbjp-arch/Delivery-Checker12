@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
-import { normalize } from '../lib/fuzzy';
 import ActionSheet from './ActionSheet';
 
 const STATUS_COLORS = {
@@ -43,8 +42,7 @@ export default function ResolveStep() {
     if (patch.matchSource === 'manual' && patch.posCode) {
       const item = items.find(i => i.id === id);
       if (item?.invoiceName) {
-        const key = normalize(item.invoiceName);
-        if (key) addLearning(key, patch.posCode);
+        addLearning({ invoiceName: item.invoiceName, posCode: patch.posCode });
       }
     }
     setActionItem(null);

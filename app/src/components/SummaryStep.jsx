@@ -1,41 +1,47 @@
+import { useState } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 
 const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
 
-function exportCSV(delivery) {
-  const headers = ['Item ID', 'Invoice Name', 'Supplier Code', 'Page', 'POS Code', 'POS Description', 'Match Level', 'Match Source', 'Confidence', 'Qty Expected', 'Qty Received', 'Status', 'Damage Note', 'Swapped For', 'Bonus'];
-  const rows = (delivery.items || []).map(it => [
-    it.id,
-    it.invoiceName || '',
-    it.supplierCode || '',
-    it.pageNumber || '',
-    it.posCode || '',
-    it.posDescription || '',
-    it.matchLevel || '',
-    it.matchSource || '',
-    it.matchConfidence || '',
-    it.qtyExpected || '',
-    it.qtyReceived ?? it.qtyExpected ?? '',
-    it.status || '',
-    it.damageNote || '',
-    it.swappedForCode || '',
-    it.isBonus ? 'Yes' : '',
-  ]);
-  const csv = [headers, ...rows].map(r => r.map(f => `"${String(f).replace(/"/g, '""')}"`).join(',')).join('\n');
+function exportGeneric2(delivery, invoiceNumber, posItemsData, departmentsData) {
+  const date = new Date().toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  const header1 = `${invoiceNumber},${date},,,,,,`;
+  const header2 = 'Qty,Code,Description,Cost,Barcode,Category';
+
+  const receivedStatuses = ['confirmed', 'short', 'damaged', 'swapped', 'bonus'];
+  const rows = (delivery.items || [])
+    .filter(i => receivedStatuses.includes(i.status))
+    .map(item => {
+      const code = item.status === 'swapped' ? (item.swappedForCode || item.posCode) : item.posCode;
+      const posItem = (posItemsData || []).find(p => p.code === code);
+      const dept = (departmentsData || []).find(d => d.id === posItem?.department);
+      const qty = item.qtyReceived ?? item.qtyExpected ?? 1;
+      const cost = item.posPrice != null ? item.posPrice.toFixed(2) : '';
+      const barcode = posItem?.scanCode || '';
+      const category = dept?.name || '';
+      const esc = v => String(v).includes(',') ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+      return [qty, code || '', esc(item.posDescription || ''), cost, barcode, esc(category)].join(',');
+    });
+
+  const csv = [header1, header2, ...rows].join('\n');
+  const supplierName = (delivery.supplier || 'SUPPLIER').toUpperCase();
+  const filename = `${supplierName}*INV ${invoiceNumber}.CSV`;
+
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `delivery-${delivery.supplier || 'unknown'}-${(delivery.date || '').slice(0, 10)}.csv`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-function exportNewItems(delivery) {
-  // Export unmatched items as a simple list for manual POS entry
-  const unmatched = (delivery.items || []).filter(i => !i.posCode || i.matchLevel === null);
-  if (!unmatched.length) { alert('No unmatched items to export.'); return; }
+function exportUnmatchedItems(delivery) {
+  const unmatched = (delivery.items || []).filter(i => !i.posCode || i.status === 'unmatched');
+  if (!unmatched.length) return;
+  const headers = ['Invoice Name', 'Supplier Code', 'Qty', 'Suggested POS Code', 'Suggested Description'];
   const rows = unmatched.map(it => [
     it.invoiceName || '',
     it.supplierCode || '',
@@ -43,19 +49,44 @@ function exportNewItems(delivery) {
     it.posCode || '',
     it.posDescription || '',
   ]);
-  const headers = ['Invoice Name', 'Supplier Code', 'Qty', 'Suggested POS Code', 'Suggested Description'];
   const csv = [headers, ...rows].map(r => r.map(f => `"${String(f).replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `new-items-${delivery.supplier || 'unknown'}-${(delivery.date || '').slice(0, 10)}.csv`;
+  a.download = `unmatched-${delivery.supplier || 'unknown'}-${(delivery.date || '').slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportShortageReport(delivery) {
+  const issues = (delivery.items || []).filter(i => ['short', 'damaged', 'missing'].includes(i.status));
+  if (!issues.length) return;
+  const lines = [
+    `SHORTAGE REPORT`,
+    `Supplier: ${delivery.supplier || 'Unknown'}`,
+    `Date: ${new Date(delivery.date).toLocaleDateString('en-AU')}`,
+    ``,
+    ...issues.map(i => {
+      let line = `${i.posDescription || i.invoiceName} [${(i.posCode || '')}]`;
+      if (i.status === 'short') line += ` — SHORT: ${i.qtyReceived ?? 0} of ${i.qtyExpected} received`;
+      else if (i.status === 'damaged') line += ` — DAMAGED${i.damageNote ? ': ' + i.damageNote : ''}`;
+      else if (i.status === 'missing') line += ` — MISSING (${i.qtyExpected} units)`;
+      return line;
+    }),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `shortage-${delivery.supplier || 'unknown'}-${(delivery.date || '').slice(0, 10)}.txt`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
 export default function SummaryStep() {
-  const { activeDelivery, finalizeDelivery, set } = useStore();
+  const { activeDelivery, posItems, departments, finalizeDelivery, set } = useStore();
+  const [invoiceNumber, setInvoiceNumber] = useState('');
 
   if (!activeDelivery) return null;
 
@@ -69,7 +100,8 @@ export default function SummaryStep() {
     setAside: items.filter(i => i.status === 'set-aside').length,
     swapped: items.filter(i => i.status === 'swapped').length,
     bonus: items.filter(i => i.isBonus).length,
-    unmatched: items.filter(i => !i.posCode).length,
+    unmatched: items.filter(i => !i.posCode || i.status === 'unmatched').length,
+    hasIssues: items.some(i => ['short', 'damaged', 'missing'].includes(i.status)),
   };
 
   const handleDone = async () => {
@@ -83,6 +115,7 @@ export default function SummaryStep() {
         <Icon name="check" size={20} /> Delivery Complete
       </h2>
 
+      {/* Delivery summary */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>
           {activeDelivery.supplier || 'Delivery'} · {fmt(activeDelivery.date)}
@@ -103,15 +136,36 @@ export default function SummaryStep() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-        <button className="btn btn-ghost" style={{ width: '100%', padding: 12 }}
-          onClick={() => exportCSV(activeDelivery)}>
-          <Icon name="download" size={16} /> Export CSV
+      {/* Invoice number for Idealpos export */}
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div className="card-label">Idealpos Import</div>
+        <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>
+          Invoice Number (from delivery docket)
+        </label>
+        <input className="input" placeholder="e.g. 23456" value={invoiceNumber}
+          onChange={e => setInvoiceNumber(e.target.value)} style={{ fontSize: 16, marginBottom: 8 }} />
+        <button className="btn btn-primary" style={{ width: '100%', padding: 12 }}
+          disabled={!invoiceNumber.trim()}
+          onClick={() => exportGeneric2(activeDelivery, invoiceNumber.trim(), posItems, departments)}>
+          <Icon name="download" size={16} /> Export for Idealpos (Generic 2)
         </button>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+          Filename must match your Idealpos supplier name exactly for auto-import.
+        </div>
+      </div>
+
+      {/* Additional exports */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
         {counts.unmatched > 0 && (
           <button className="btn btn-ghost" style={{ width: '100%', padding: 12 }}
-            onClick={() => exportNewItems(activeDelivery)}>
-            <Icon name="download" size={16} /> Export New Items ({counts.unmatched})
+            onClick={() => exportUnmatchedItems(activeDelivery)}>
+            <Icon name="download" size={16} /> Export Unmatched Items ({counts.unmatched})
+          </button>
+        )}
+        {counts.hasIssues && (
+          <button className="btn btn-ghost" style={{ width: '100%', padding: 12 }}
+            onClick={() => exportShortageReport(activeDelivery)}>
+            <Icon name="download" size={16} /> Export Shortage Report
           </button>
         )}
       </div>

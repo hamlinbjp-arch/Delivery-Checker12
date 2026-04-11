@@ -1,8 +1,11 @@
 import { normalize, fuzzyScore } from './fuzzy';
 
+const stripZeros = c => (c || '').replace(/^0+/, '') || '0';
+
 // Match a single invoice item against the data store.
+// context: { supplierMappings, posItems, learningLayer, supplierName }
 // Returns the item enhanced with match fields.
-export function matchInvoiceItem(item, { supplierMappings, posItems, learningLayer }) {
+export function matchInvoiceItem(item, { supplierMappings, posItems, learningLayer, supplierName }) {
   const result = {
     posCode: null,
     posDescription: null,
@@ -13,9 +16,26 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
     status: 'unmatched',
   };
 
-  // Level 1: master table — supplier code → stock code
+  // Level 1: master table — supplier code lookup in supplier mappings
+  // supplierMappings is a flat array: [{ supplier, code, description, price }]
+  // where code is the supplier's item code (appears on their invoices)
   if (item.supplierCode && supplierMappings?.length) {
-    const found = supplierMappings.find(m => m.code === item.supplierCode);
+    const normInvoiceCode = stripZeros(item.supplierCode.trim());
+    const normSupplierName = (supplierName || '').toLowerCase().trim();
+
+    const found = supplierMappings.find(m => {
+      const mCode = stripZeros((m.code || '').trim());
+      if (mCode !== normInvoiceCode) return false;
+      // If supplier name provided, also filter by matching supplier
+      if (normSupplierName) {
+        const mName = (m.supplier || '').toLowerCase().trim();
+        return mName === normSupplierName
+          || mName.includes(normSupplierName)
+          || normSupplierName.includes(mName);
+      }
+      return true;
+    });
+
     if (found) {
       const posItem = posItems?.find(p => p.code === found.code) || null;
       return {
@@ -75,17 +95,19 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
 }
 
 // Match all invoice items. Returns array with match fields added.
-export function matchAllItems(items, { supplierMappings, posItems, learningLayer }) {
+// context: { supplierMappings, posItems, learningLayer, supplierName }
+export function matchAllItems(items, context) {
   return items.map(item => ({
     ...item,
-    ...matchInvoiceItem(item, { supplierMappings, posItems, learningLayer }),
+    ...matchInvoiceItem(item, context),
   }));
 }
 
-// Find a POS item by barcode.
+// Find a POS item by barcode/scanCode.
 export function findByBarcode(barcode, posItems) {
   if (!barcode || !posItems?.length) return null;
-  return posItems.find(p => p.barcode === barcode) || null;
+  const norm = barcode.replace(/\s/g, '');
+  return posItems.find(p => p.scanCode && p.scanCode.replace(/\s/g, '') === norm) || null;
 }
 
 // Search POS items by query, return top 10 fuzzy matches.
