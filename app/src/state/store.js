@@ -3,166 +3,189 @@ import { store as ls } from '../lib/storage';
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
+// Debounce helper
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// Debounced active-delivery persist (250ms)
+const persistDelivery = debounce(async (delivery) => {
+  await ls.set('active-delivery', delivery);
+}, 250);
+
 export const useStore = create((set, get) => ({
-  // ── Persisted ──────────────────────────────────────────────────
-  apiKey: ls.get('api-key') || '',
-  posData: ls.get('pos-data'),       // { items:[{code,description,supplier}], aliases:{}, updatedAt }
-  suppliers: ls.get('suppliers') || [],
-  history: ls.get('history') || [],
+  // ── Persisted state ──────────────────────────────────────────────
+  apiKey: '',
+  supplierMappings: [],     // [{ supplier, code, description, price, department? }]
+  posItems: [],             // FILE-STOCK-4 items: [{ code, description, department, price, supplierCode, barcode }]
+  departments: [],          // [{ id, name }]
+  learningLayer: {},        // { normalizedInvoiceName: posCode }
+  activeDelivery: null,     // { step, supplier, date, items:[], notes } | null
+  history: [],              // capped at 100
 
-  // ── Session: delivery form ──────────────────────────────────────
-  page: 'delivery',                  // 'delivery' | 'history' | 'suppliers' | 'settings'
-  selectedSupplier: '',
-  deliveryNotes: '',
-  reportFiles: [],                   // File[]
-  itemPhotos: [],                    // File[] — bulk overview shots
-  scannedBarcodes: [],
-
-  // ── Session: results ────────────────────────────────────────────
-  results: null,                     // processed item array | null
-  viewingHistory: null,              // history record | null
-  deliveryStep: 'form',              // 'form' | 'verify' | 'pos'
-  processing: false,
-  processStep: '',
-
-  // ── Storage error ───────────────────────────────────────────────
+  // ── Session state ────────────────────────────────────────────────
+  setupComplete: false,
+  page: 'delivery',         // 'delivery' | 'history' | 'settings'
+  processStep: 'idle',      // 'idle'|'extracting'|'matching'|'done'|'error'
+  viewingHistoryId: null,
   storageError: null,
-  clearStorageError() { set({ storageError: null }); },
 
-  // ── Session: UI state ───────────────────────────────────────────
-  issuesOnly: false,
-  showPOSEntry: false,
-  posChecked: new Set(),
-  itemPhotoMap: {},                  // itemId -> [blobUrl, ...]
-  viewingPhoto: null,
-  resultsSearch: '',
-  expandedRows: new Set(),
-  bulkPhotoResults: {},              // photoIdx -> [{name,visible,confidence,reason}]
-  photoAnalysisModal: null,          // {photoIdx,blobUrl,analyzing,results}
-  scanning: false,
-
-  // ── Setters (simple) ────────────────────────────────────────────
+  // ── Simple setter ────────────────────────────────────────────────
   set,
 
-  // ── Persisted setters ───────────────────────────────────────────
-  saveApiKey(key) {
-    if (ls.set('api-key', key) === 'quota') set({ storageError: 'quota' });
+  // ── Storage error ────────────────────────────────────────────────
+  clearStorageError() { set({ storageError: null }); },
+
+  // ── API Key ──────────────────────────────────────────────────────
+  async saveApiKey(key) {
+    await ls.set('api-key', key);
     set({ apiKey: key });
   },
-  savePosData(data) {
-    if (ls.set('pos-data', data) === 'quota') set({ storageError: 'quota' });
-    ls.set('skip-pos', true);
-    set({ posData: data });
-  },
-  saveSuppliers(suppliers) {
-    if (ls.set('suppliers', suppliers) === 'quota') set({ storageError: 'quota' });
-    set({ suppliers });
-  },
-  saveHistory(history) {
-    if (ls.set('history', history) === 'quota') set({ storageError: 'quota' });
-    set({ history });
-  },
-  clearPosData() {
-    ls.del('pos-data');
-    set({ posData: null });
+
+  // ── Supplier Mappings ────────────────────────────────────────────
+  async saveSupplierMappings(items) {
+    await ls.set('supplier-mappings', items);
+    set({ supplierMappings: items });
   },
 
-  // ── Item photo helpers ──────────────────────────────────────────
-  addItemPhotos(itemId, files) {
-    const map = { ...get().itemPhotoMap };
-    if (!map[itemId]) map[itemId] = [];
-    const slots = 10 - map[itemId].length;
-    Array.from(files).slice(0, slots).forEach(f => map[itemId].push(URL.createObjectURL(f)));
-    set({ itemPhotoMap: map });
-  },
-  removeItemPhoto(itemId, idx) {
-    const map = { ...get().itemPhotoMap };
-    if (!map[itemId]) return;
-    URL.revokeObjectURL(map[itemId][idx]);
-    map[itemId].splice(idx, 1);
-    if (!map[itemId].length) delete map[itemId];
-    set({ itemPhotoMap: map });
+  // ── POS Items ────────────────────────────────────────────────────
+  async savePosItems(items) {
+    await ls.set('pos-items', items);
+    set({ posItems: items });
   },
 
-  // ── Reset delivery session ──────────────────────────────────────
-  resetDelivery() {
-    Object.values(get().itemPhotoMap).flat().forEach(url => { try { URL.revokeObjectURL(url); } catch {} });
-    set({
-      results: null, deliveryStep: 'form',
-      reportFiles: [], itemPhotos: [], scannedBarcodes: [],
-      deliveryNotes: '', selectedSupplier: '',
-      issuesOnly: false, expandedRows: new Set(),
-      itemPhotoMap: {}, viewingPhoto: null, resultsSearch: '',
-      bulkPhotoResults: {}, photoAnalysisModal: null,
-      posChecked: new Set(), showPOSEntry: false,
-    });
+  // ── Departments ──────────────────────────────────────────────────
+  async saveDepartments(depts) {
+    await ls.set('departments', depts);
+    set({ departments: depts });
   },
 
-  // ── Toggle helpers ──────────────────────────────────────────────
-  toggleRow(id) {
-    const s = new Set(get().expandedRows);
-    s.has(id) ? s.delete(id) : s.add(id);
-    set({ expandedRows: s });
+  // ── Learning Layer ───────────────────────────────────────────────
+  async setLearningLayer(ll) {
+    await ls.set('learning-layer', ll);
+    set({ learningLayer: ll });
   },
-  togglePosChecked(id) {
-    const s = new Set(get().posChecked);
-    s.has(id) ? s.delete(id) : s.add(id);
-    set({ posChecked: s });
+  async addLearning(normalizedName, posCode) {
+    const ll = { ...get().learningLayer, [normalizedName]: posCode };
+    await ls.set('learning-layer', ll);
+    set({ learningLayer: ll });
   },
 
-  // ── Mutate result item in place ─────────────────────────────────
+  // ── Active Delivery ──────────────────────────────────────────────
+  async startDelivery(supplier) {
+    const delivery = {
+      step: 'form',
+      supplier: supplier || '',
+      date: new Date().toISOString(),
+      items: [],
+      notes: '',
+    };
+    await ls.set('active-delivery', delivery);
+    set({ activeDelivery: delivery });
+  },
+
+  async updateDeliveryStep(step) {
+    const delivery = { ...get().activeDelivery, step };
+    await ls.set('active-delivery', delivery);
+    set({ activeDelivery: delivery });
+  },
+
+  updateDeliveryItem(id, patch) {
+    const ad = get().activeDelivery;
+    if (!ad) return;
+    const items = ad.items.map(it => it.id === id ? { ...it, ...patch } : it);
+    const delivery = { ...ad, items };
+    set({ activeDelivery: delivery });
+    persistDelivery(delivery);
+  },
+
+  // Alias for backwards compat
   updateResultItem(id, patch) {
-    const results = (get().results || []).map(it => it.id === id ? { ...it, ...patch } : it);
-    set({ results });
+    get().updateDeliveryItem(id, patch);
   },
 
-  // ── Save alias ──────────────────────────────────────────────────
-  saveAlias(itemId, label) {
-    const posData = { ...get().posData };
-    if (!posData.aliases) posData.aliases = {};
-    const item = (get().results || []).find(i => i.id === itemId);
-    if (!item?.posCode) return;
-    for (const k of Object.keys(posData.aliases)) {
-      if (posData.aliases[k] === item.posCode) delete posData.aliases[k];
-    }
-    if (label) posData.aliases[label.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim()] = item.posCode;
-    if (ls.set('pos-data', posData) === 'quota') set({ storageError: 'quota' });
-    set({ posData });
-    get().updateResultItem(itemId, { aliased: !!label });
+  async setDeliveryNotes(notes) {
+    const delivery = { ...get().activeDelivery, notes };
+    await ls.set('active-delivery', delivery);
+    set({ activeDelivery: delivery });
   },
 
-  // ── Learn supplier mapping ──────────────────────────────────────
-  confirmMatch(itemId) {
-    const state = get();
-    const item = (state.results || []).find(i => i.id === itemId);
-    if (!item?.posCode || !state.selectedSupplier) return;
-    const suppliers = state.suppliers.map(s => {
-      if (s.name !== state.selectedSupplier) return s;
-      const mappings = { ...(s.mappings || {}) };
-      mappings[item.name.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim()] = item.posCode;
-      return { ...s, mappings };
-    });
-    if (ls.set('suppliers', suppliers) === 'quota') set({ storageError: 'quota' });
-    set({ suppliers });
-    get().updateResultItem(itemId, { learned: true });
+  async setDeliveryItems(items) {
+    const delivery = { ...get().activeDelivery, items };
+    await ls.set('active-delivery', delivery);
+    set({ activeDelivery: delivery });
   },
 
-  // ── History helpers ─────────────────────────────────────────────
-  addHistoryRecord(record) {
+  async cancelDelivery() {
+    await ls.del('active-delivery');
+    set({ activeDelivery: null, processStep: 'idle' });
+  },
+
+  // ── Finalize Delivery ────────────────────────────────────────────
+  async finalizeDelivery() {
+    const ad = get().activeDelivery;
+    if (!ad) return;
+    const record = {
+      id: uid(),
+      supplier: ad.supplier,
+      date: ad.date,
+      notes: ad.notes,
+      items: ad.items,
+      itemCount: ad.items.length,
+      issueCount: ad.items.filter(i => i.status && i.status !== 'confirmed').length,
+    };
     const history = [record, ...get().history].slice(0, 100);
-    if (ls.set('history', history) === 'quota') set({ storageError: 'quota' });
-    set({ history });
+    await ls.set('history', history);
+    await ls.del('active-delivery');
+    set({ history, activeDelivery: null, processStep: 'idle' });
   },
-  deleteHistoryRecord(id) {
+
+  // ── History ──────────────────────────────────────────────────────
+  async deleteHistoryRecord(id) {
     const history = get().history.filter(h => h.id !== id);
-    if (ls.set('history', history) === 'quota') set({ storageError: 'quota' });
+    await ls.set('history', history);
     set({ history });
   },
-  clearHistory() {
-    ls.set('history', []);
+  async clearHistory() {
+    await ls.set('history', []);
     set({ history: [] });
   },
 
-  // ── uid helper exposed ──────────────────────────────────────────
+  // ── uid ──────────────────────────────────────────────────────────
   uid,
 }));
+
+// ── initStore: load all persisted data before React renders ──────────
+export async function initStore() {
+  const [
+    apiKey,
+    supplierMappings,
+    posItems,
+    departments,
+    learningLayer,
+    activeDelivery,
+    history,
+    setupComplete,
+  ] = await Promise.all([
+    ls.get('api-key'),
+    ls.get('supplier-mappings'),
+    ls.get('pos-items'),
+    ls.get('departments'),
+    ls.get('learning-layer'),
+    ls.get('active-delivery'),
+    ls.get('history'),
+    ls.get('setup-complete'),
+  ]);
+
+  useStore.setState({
+    apiKey: apiKey || '',
+    supplierMappings: supplierMappings || [],
+    posItems: posItems || [],
+    departments: departments || [],
+    learningLayer: learningLayer || {},
+    activeDelivery: activeDelivery || null,
+    history: history || [],
+    setupComplete: setupComplete === true,
+  });
+}
