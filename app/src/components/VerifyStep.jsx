@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 import { callClaude } from '../lib/claude';
@@ -7,6 +7,12 @@ import { fuzzyScore } from '../lib/fuzzy';
 import PhotoModal from './PhotoModal';
 
 const MAX_ITEMS_PER_ANALYSIS = 30;
+
+const modalBlobUrls = new Set();
+function revokeModalBlobUrls() {
+  modalBlobUrls.forEach(url => { try { URL.revokeObjectURL(url); } catch {} });
+  modalBlobUrls.clear();
+}
 
 function getRemainingItems(results, itemPhotoMap) {
   return (results || []).filter(i => !(itemPhotoMap[i.id] || []).length);
@@ -26,6 +32,7 @@ Output ONLY a raw JSON array. No markdown. No text outside the JSON.`;
 async function analyzePhotoItems(photoIdx, blobUrl, set, get, analyzingRef, { autoOpen = true } = {}) {
   if (analyzingRef?.current?.has(photoIdx)) return;
   analyzingRef?.current?.add(photoIdx);
+  modalBlobUrls.add(blobUrl);
 
   const state = get();
   const file = state.itemPhotos[photoIdx];
@@ -158,7 +165,7 @@ function ItemPicker({ searchHint, remainingItems, onSelect, onDismiss }) {
 }
 
 function AnalysisModal() {
-  const { photoAnalysisModal, results: allResults, set } = useStore();
+  const { photoAnalysisModal, set } = useStore();
   const [openPicker, setOpenPicker] = useState(null);
 
   if (!photoAnalysisModal) return null;
@@ -168,6 +175,7 @@ function AnalysisModal() {
     const map = { ...useStore.getState().itemPhotoMap };
     if (!map[targetItem.id]) map[targetItem.id] = [];
     map[targetItem.id].push(blobUrl);
+    revokeModalBlobUrls();
     set({ itemPhotoMap: map, photoAnalysisModal: null });
   };
 
@@ -175,9 +183,11 @@ function AnalysisModal() {
   const autoOk = visibleItems.filter(r => r.name !== 'UNIDENTIFIED' && r.confidence >= 90);
   const needsReview = visibleItems.filter(r => r.name === 'UNIDENTIFIED' || r.confidence < 90);
 
+  const closeModal = () => { revokeModalBlobUrls(); set({ photoAnalysisModal: null }); };
+
   return (
-    <div className="analysis-modal" onClick={e => { if (e.target === e.currentTarget) set({ photoAnalysisModal: null }); }}>
-      <button className="photo-modal-close" style={{ position: 'fixed' }} onClick={() => set({ photoAnalysisModal: null })}>✕</button>
+    <div className="analysis-modal" onClick={e => { if (e.target === e.currentTarget) closeModal(); }}>
+      <button className="photo-modal-close" style={{ position: 'fixed' }} onClick={closeModal}>✕</button>
       <div className="analysis-modal-inner">
 
         {/* Photo with bounding box overlay */}
@@ -390,42 +400,50 @@ export default function VerifyStep() {
   const bulkRef = useRef();
   const blobCacheRef = useRef({});
   const analyzingRef = useRef(new Set());
+  const bulkAnalysisTimerRef = useRef(null);
 
-  // Revoke all cached blob URLs on unmount
+  // Rebuild blob URL cache whenever itemPhotos changes (handles removal/reorder)
+  useEffect(() => {
+    Object.values(blobCacheRef.current).forEach(url => { try { URL.revokeObjectURL(url); } catch {} });
+    blobCacheRef.current = {};
+    itemPhotos.forEach((f, i) => { blobCacheRef.current[i] = URL.createObjectURL(f); });
+  }, [itemPhotos]);
+
+  // Revoke on unmount
   useEffect(() => {
     return () => {
+      clearTimeout(bulkAnalysisTimerRef.current);
       Object.values(blobCacheRef.current).forEach(url => { try { URL.revokeObjectURL(url); } catch {} });
+      revokeModalBlobUrls();
     };
   }, []);
 
-  const getBlobUrl = (f, i) => {
-    if (!blobCacheRef.current[i]) blobCacheRef.current[i] = URL.createObjectURL(f);
-    return blobCacheRef.current[i];
-  };
+  const getBlobUrl = (i) => blobCacheRef.current[i];
 
   const items = results || [];
   const confirmed = items.filter(i => (itemPhotoMap[i.id] || []).length > 0).length;
   const remaining = items.length - confirmed;
-  const sorted = [...items].sort((a, b) => {
+  const sorted = useMemo(() => [...items].sort((a, b) => {
     const aH = (itemPhotoMap[a.id] || []).length > 0;
     const bH = (itemPhotoMap[b.id] || []).length > 0;
     return (bH ? 1 : 0) - (aH ? 1 : 0);
-  });
+  }), [items, itemPhotoMap]);
 
   const handleBulkAdd = (files) => {
     const newFiles = Array.from(files);
     if (!newFiles.length) return;
     const startIdx = itemPhotos.length;
     set({ itemPhotos: [...itemPhotos, ...newFiles] });
-    // Auto-analyze the first new photo immediately using cached URL
-    setTimeout(() => {
-      const blobUrl = getBlobUrl(newFiles[0], startIdx);
-      analyzePhotoItems(startIdx, blobUrl, set, useStore.getState, analyzingRef);
+    // Auto-analyze after blob cache rebuilds (useEffect fires synchronously before paint)
+    bulkAnalysisTimerRef.current = setTimeout(() => {
+      const blobUrl = getBlobUrl(startIdx);
+      if (blobUrl) analyzePhotoItems(startIdx, blobUrl, set, useStore.getState, analyzingRef);
     }, 50);
   };
 
   const handleAnalyze = (idx) => {
-    const blobUrl = getBlobUrl(itemPhotos[idx], idx);
+    const blobUrl = getBlobUrl(idx);
+    if (!blobUrl) return;
     if (bulkPhotoResults[idx]) {
       const allRemaining = getRemainingItems(results, itemPhotoMap);
       const remainingItems = allRemaining.slice(0, MAX_ITEMS_PER_ANALYSIS);
@@ -472,7 +490,7 @@ export default function VerifyStep() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {itemPhotos.length ? itemPhotos.map((f, i) => {
             const res = bulkPhotoResults[i];
-            const url = getBlobUrl(f, i);
+            const url = getBlobUrl(i);
             const foundCount = res ? res.filter(r => r.visible && r.name !== 'UNIDENTIFIED' && r.confidence >= 90).length : null;
             const pendingCount = res ? res.filter(r => r.visible && (r.name === 'UNIDENTIFIED' || r.confidence < 90)).length : null;
             const hasPending = pendingCount > 0;

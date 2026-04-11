@@ -5,7 +5,7 @@ export function generateCSV(items, notes, itemPhotoMap = {}) {
   const h = ['Item ID', 'Delivery Item', 'Supplier Code', 'Page Number', 'Qty Expected', 'Qty Received', 'POS Code', 'Idealpos Name', 'Match Confidence', 'Match Source', 'Photos Attached', 'Damage Flag', 'Damage Note', 'Status', 'Manual Notes', 'Delivery Notes'];
   const rows = items.map(it => {
     const photoCount = (itemPhotoMap[it.id] || []).length;
-    const matchSrc = it.learned ? 'Learned' : it.aliased ? 'Alias' : 'Fuzzy';
+    const matchSrc = it.byCode ? 'Code' : it.learned ? 'Learned' : it.aliased ? 'Alias' : 'Fuzzy';
     return [it.id, it.name, it.supplierCode || '', it.pageNumber || '', it.qtyExpected, it.qtyReceived ?? it.qtyExpected, it.posCode || '', it.posName || '', pct(it.confidence), matchSrc, photoCount, it.damaged ? 'Yes' : 'No', it.damageNote || '', it.status, it.manualNotes || '', notes || ''];
   });
   return [h.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))].join('\n');

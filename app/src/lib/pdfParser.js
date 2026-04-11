@@ -62,6 +62,9 @@ export async function parsePOSPdf(file, onProgress) {
   const supplierHeader = /^([A-Z][A-Za-z0-9\s&'.,/()-]{2,50})$/;
   let currentSupplier = '';
 
+  onProgress?.('Loading PDF...');
+  await new Promise(r => setTimeout(r, 0));
+
   for (let i = 1; i <= totalPages; i++) {
     if (i === 1 || i % 10 === 0) {
       onProgress?.(`Parsing page ${i}/${totalPages}...`);
