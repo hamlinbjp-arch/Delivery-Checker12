@@ -10,7 +10,6 @@ const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month
 export default function HistoryResults() {
   const { viewingHistory, results, expandedRows, toggleRow, set, resetDelivery } = useStore();
   const allItems = results || viewingHistory?.items || [];
-  const isHist = !!viewingHistory;
   const supplier = viewingHistory?.supplier || '';
   const notes = viewingHistory?.notes || '';
 
@@ -32,7 +31,10 @@ export default function HistoryResults() {
             <Icon name="download" size={12} /> CSV
           </button>
           <button className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12 }}
-            onClick={() => { set({ viewingHistory: null, results: null }); resetDelivery(); }}>
+            onClick={() => {
+              set({ viewingHistory: null, results: null });
+              if (useStore.getState().deliveryStep === 'form') resetDelivery();
+            }}>
             ← Back
           </button>
         </div>

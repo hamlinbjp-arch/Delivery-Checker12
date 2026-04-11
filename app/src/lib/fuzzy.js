@@ -29,6 +29,8 @@ export function fuzzyScore(a, b) {
       if (used.has(i)) continue;
       const wb = tb[i];
       let s = 0;
+      const lenDiff = Math.abs(wa.length - wb.length);
+      if (lenDiff > Math.max(wa.length, wb.length) * 0.6) continue;
       if (wa === wb) s = 1;
       else if (wa.startsWith(wb) || wb.startsWith(wa)) s = 0.85;
       else if (wa.includes(wb) || wb.includes(wa)) s = 0.7;
@@ -43,10 +45,11 @@ export function fuzzyScore(a, b) {
 export function findBestPOSMatch(itemName, posList, mappings = {}, aliases = {}, supplierCode = '') {
   if (!posList || !posList.length) return { code: '', name: '', confidence: 0 };
   const key = normalize(itemName);
-  // 0. Exact supplier code match
+  // 0. Exact supplier code match (case-insensitive)
   if (supplierCode) {
-    const e = posList.find(p => p.code === supplierCode);
-    if (e) return { code: e.code, name: e.description, confidence: 100 };
+    const sc = supplierCode.toLowerCase().trim();
+    const e = posList.find(p => p.code.toLowerCase().trim() === sc);
+    if (e) return { code: e.code, name: e.description, confidence: 100, byCode: true };
   }
   // 1. Supplier-learned mappings
   const mc = mappings[key];

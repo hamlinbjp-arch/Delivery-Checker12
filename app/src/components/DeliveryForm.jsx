@@ -6,10 +6,8 @@ import { findBestPOSMatch, fuzzyScore } from '../lib/fuzzy';
 import { resizeImage, fileToBase64 } from '../lib/imageUtils';
 import { detectSupplierFromPDF } from '../lib/pdfParser';
 
-const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-
 async function doProcessDelivery(getState, set) {
-  const { apiKey, reportFiles, itemPhotos, scannedBarcodes, selectedSupplier, deliveryNotes, posData, suppliers } = getState();
+  const { apiKey, reportFiles, itemPhotos, scannedBarcodes, selectedSupplier, deliveryNotes, posData, suppliers, uid } = getState();
   set({ processing: true, processStep: 'Reading files...' });
   try {
     const content = [];
@@ -69,7 +67,7 @@ Include EVERY line item.` });
         id: uid(), name: cleanName, supplierCode, pageNumber, qtyExpected: item.qtyExpected || 0,
         posCode: posMatch.code, posName: posMatch.name, confidence: posMatch.confidence,
         status: isNew ? 'NEW ITEM' : 'Matched', damaged: false, damageNote: '', manualNotes: '', qtyReceived: item.qtyExpected || 0,
-        learned: posMatch.learned || false, aliased: posMatch.aliased || false,
+        learned: posMatch.learned || false, aliased: posMatch.aliased || false, byCode: posMatch.byCode || false,
         posSupplier: posItemsForMatch.find(p => p.code === posMatch.code)?.supplier || '',
       };
     });

@@ -41,7 +41,7 @@ export default function Setup() {
         <div style={{ width: '100%', maxWidth: 400 }}>
           <label style={{ fontSize: 13, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>Step 2: Upload POS Stocklist PDF</label>
           <p style={{ fontSize: 12, color: 'var(--text3)', margin: '0 0 12px' }}>Exported from Idealpos. Parsed and stored for future sessions.</p>
-          <input id="setup-pdf" type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) handlePdf(e.target.files[0]); }} />
+          <input id="setup-pdf" type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) handlePdf(e.target.files[0]); e.target.value = ''; }} />
           <button className="btn btn-primary" style={{ width: '100%', padding: 16 }} disabled={processing}
             onClick={() => document.getElementById('setup-pdf').click()}>
             {processing ? <><span className="spinner">⟳</span> {step}</> : <><Icon name="upload" size={18} /> Upload POS PDF</>}

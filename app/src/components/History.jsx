@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 
@@ -7,8 +7,14 @@ const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month
 export default function History() {
   const { history, deleteHistoryRecord, set } = useStore();
   const [q, setQ] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
   const [pendingDel, setPendingDel] = useState(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setQ(searchInput), 150);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const suppliers = [...new Set(history.map(h => h.supplier).filter(Boolean))].sort();
 
@@ -25,18 +31,20 @@ export default function History() {
       </h2>
 
       {suppliers.length > 1 && (
-        <select className="input" style={{ appearance: 'auto', marginBottom: 8, fontSize: 13 }}
-          value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}>
+        <select className="input" style={{ appearance: 'auto', marginBottom: 8, fontSize: 16 }}
+          value={supplierFilter} onChange={e => { setSupplierFilter(e.target.value); setSearchInput(''); }}>
           <option value="">All suppliers</option>
           {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       )}
 
-      <input className="input" placeholder="Search by supplier or date..." style={{ marginBottom: 12, fontSize: 13 }}
-        value={q} onChange={e => setQ(e.target.value)} />
+      <input className="input" placeholder="Search by supplier or date..." style={{ marginBottom: 12, fontSize: 16 }}
+        value={searchInput} onChange={e => setSearchInput(e.target.value)} />
 
       {filtered.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No deliveries recorded yet.</div>
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>
+          {history.length === 0 ? 'No deliveries recorded yet.' : 'No deliveries match your filter.'}
+        </div>
       ) : filtered.map(h => (
         <div key={h.id} className="card hist-item">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}

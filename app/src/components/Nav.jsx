@@ -11,7 +11,9 @@ const TABS = [
 export default function Nav() {
   const page = useStore(s => s.page);
   const set = useStore(s => s.set);
-  const hasActiveDelivery = useStore(s => s.results !== null || s.deliveryStep !== 'form');
+  const hasActiveDelivery = useStore(s =>
+    (s.results !== null && !s.viewingHistory) || s.deliveryStep !== 'form'
+  );
   return (
     <div className="nav">
       {TABS.map(t => (

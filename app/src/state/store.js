@@ -94,6 +94,7 @@ export const useStore = create((set, get) => ({
       issuesOnly: false, expandedRows: new Set(),
       itemPhotoMap: {}, viewingPhoto: null, resultsSearch: '',
       bulkPhotoResults: {}, photoAnalysisModal: null,
+      posChecked: new Set(), showPOSEntry: false,
     });
   },
 

@@ -87,12 +87,24 @@ function ItemRow({ item }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
               <span style={{ color: 'var(--text3)' }}>Qty Received:</span>
               <button className="btn btn-ghost" style={{ padding: '3px 10px', fontSize: 14 }}
-                onClick={() => updateResultItem(item.id, { qtyReceived: Math.max(0, (item.qtyReceived ?? item.qtyExpected) - 1) })}>−</button>
+                onClick={() => {
+                  const newQty = Math.max(0, (item.qtyReceived ?? item.qtyExpected) - 1);
+                  updateResultItem(item.id, {
+                    qtyReceived: newQty,
+                    status: newQty < item.qtyExpected ? 'Short' : (item.confidence < 45 ? 'NEW ITEM' : 'Matched'),
+                  });
+                }}>−</button>
               <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
                 {item.qtyReceived ?? item.qtyExpected}
               </span>
               <button className="btn btn-ghost" style={{ padding: '3px 10px', fontSize: 14 }}
-                onClick={() => updateResultItem(item.id, { qtyReceived: (item.qtyReceived ?? item.qtyExpected) + 1 })}>+</button>
+                onClick={() => {
+                  const newQty = (item.qtyReceived ?? item.qtyExpected) + 1;
+                  updateResultItem(item.id, {
+                    qtyReceived: newQty,
+                    status: newQty < item.qtyExpected ? 'Short' : (item.confidence < 45 ? 'NEW ITEM' : 'Matched'),
+                  });
+                }}>+</button>
               <span style={{ color: 'var(--text3)' }}>/ {item.qtyExpected} expected</span>
             </div>
             {item.posCode && (
@@ -114,8 +126,8 @@ function ItemRow({ item }) {
                 </button>
               )}
             </div>
-            {isDmg && <input className="input" placeholder="Damage notes..." value={item.damageNote || ''} style={{ fontSize: 12, padding: '8px 10px', borderColor: '#f4433644' }} onChange={e => updateResultItem(item.id, { damageNote: e.target.value })} />}
-            {item.status === 'NEW ITEM' && <input className="input" placeholder="Manual POS code or notes..." value={item.manualNotes || ''} style={{ fontSize: 12, padding: '8px 10px', fontFamily: 'var(--font-mono)', borderColor: '#e5a10044' }} onChange={e => updateResultItem(item.id, { manualNotes: e.target.value })} />}
+            {isDmg && <input className="input" placeholder="Damage notes..." value={item.damageNote || ''} style={{ fontSize: 16, padding: '8px 10px', borderColor: '#f4433644' }} onChange={e => updateResultItem(item.id, { damageNote: e.target.value })} />}
+            {item.status === 'NEW ITEM' && <input className="input" placeholder="Manual POS code or notes..." value={item.manualNotes || ''} style={{ fontSize: 16, padding: '8px 10px', fontFamily: 'var(--font-mono)', borderColor: '#e5a10044' }} onChange={e => updateResultItem(item.id, { manualNotes: e.target.value })} />}
             {photos.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {photos.map((_, i) => <button key={i} className="btn btn-ghost" style={{ fontSize: 10, padding: '4px 8px', color: 'var(--red)' }} onClick={() => removeItemPhoto(item.id, i)}>✕ Photo {i + 1}</button>)}
@@ -155,8 +167,29 @@ function POSEntryMode() {
 }
 
 export default function POSStep() {
-  const store = useStore();
-  const { results, itemPhotoMap, posData, selectedSupplier, deliveryNotes, issuesOnly, resultsSearch, showPOSEntry, set, resetDelivery, addHistoryRecord, uid } = store;
+  const { results, itemPhotoMap, posData, selectedSupplier, deliveryNotes,
+          issuesOnly, resultsSearch, showPOSEntry, set, resetDelivery,
+          addHistoryRecord, uid } = useStore(s => ({
+    results: s.results,
+    itemPhotoMap: s.itemPhotoMap,
+    posData: s.posData,
+    selectedSupplier: s.selectedSupplier,
+    deliveryNotes: s.deliveryNotes,
+    issuesOnly: s.issuesOnly,
+    resultsSearch: s.resultsSearch,
+    showPOSEntry: s.showPOSEntry,
+    set: s.set,
+    resetDelivery: s.resetDelivery,
+    addHistoryRecord: s.addHistoryRecord,
+    uid: s.uid,
+  }));
+
+  const [searchInput, setSearchInput] = useState(resultsSearch);
+  useEffect(() => {
+    const t = setTimeout(() => set({ resultsSearch: searchInput }), 150);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
   const allItems = results || [];
   const aliases = posData?.aliases || {};
 
@@ -180,7 +213,11 @@ export default function POSStep() {
     const record = {
       id: uid(), date: new Date().toISOString(), supplier: selectedSupplier || 'Unknown',
       notes: deliveryNotes, items: allItems, itemCount: allItems.length,
-      issueCount: allItems.filter(i => i.status !== 'Matched').length,
+      issueCount: allItems.filter(i =>
+        i.status !== 'Matched' ||
+        i.damaged ||
+        (i.qtyReceived !== undefined && i.qtyReceived < i.qtyExpected)
+      ).length,
     };
     addHistoryRecord(record);
     resetDelivery();
@@ -222,9 +259,9 @@ export default function POSStep() {
       </details>
 
       <div style={{ marginBottom: 10, position: 'relative' }}>
-        <input className="input" placeholder="Search by name or Idealpos name..." value={resultsSearch}
-          onChange={e => set({ resultsSearch: e.target.value })}
-          style={{ paddingLeft: 32, fontSize: 12 }} />
+        <input className="input" placeholder="Search by name or Idealpos name..." value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
+          style={{ paddingLeft: 32, fontSize: 16 }} />
         <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', opacity: .5 }}><Icon name="search" size={14} /></span>
         {q && <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: 'var(--text3)' }}>{filtered.length}/{allItems.length}</span>}
       </div>
