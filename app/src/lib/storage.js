@@ -1,8 +1,10 @@
+import { get, set, del, keys, createStore } from 'idb-keyval';
+
+const dbStore = createStore('deliverycheck-db', 'keyval');
+
 export const store = {
-  get(k) { try { const v = localStorage.getItem('dc-' + k); return v ? JSON.parse(v) : null; } catch { return null; } },
-  set(k, v) {
-    try { localStorage.setItem('dc-' + k, JSON.stringify(v)); return true; }
-    catch (e) { return (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') ? 'quota' : false; }
-  },
-  del(k) { try { localStorage.removeItem('dc-' + k); return true; } catch { return false; } },
+  async get(k) { try { return await get(k, dbStore); } catch { return null; } },
+  async set(k, v) { try { await set(k, v, dbStore); return true; } catch { return false; } },
+  async del(k) { try { await del(k, dbStore); return true; } catch { return false; } },
+  async keys() { try { return await keys(dbStore); } catch { return []; } },
 };
