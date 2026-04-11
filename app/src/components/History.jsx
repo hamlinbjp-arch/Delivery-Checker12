@@ -6,8 +6,8 @@ const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month
 
 export default function History() {
   const { history, deleteHistoryRecord, set } = useStore();
-  const [q, setQ] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [q, setQ] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
   const [pendingDel, setPendingDel] = useState(null);
 
@@ -48,7 +48,7 @@ export default function History() {
       ) : filtered.map(h => (
         <div key={h.id} className="card hist-item">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
-            onClick={() => set({ viewingHistory: h, page: 'delivery', results: h.items })}>
+            onClick={() => set({ viewingHistoryId: h.id, page: 'history' })}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 600 }}>{h.supplier || 'Unknown Supplier'}</div>
               <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{fmt(h.date)}</div>
