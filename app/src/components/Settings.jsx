@@ -1,35 +1,92 @@
 import { useState, useRef } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
-import { parsePOSPdf } from '../lib/pdfParser';
+import { parseSupplierMappingsPDF } from '../lib/pdfParser';
+import { parsePOSStock, mergePOSStock } from '../lib/posParser';
+import { parseDepartments } from '../lib/departmentsParser';
 
 const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 export default function Settings() {
-  const { apiKey, posData, saveApiKey, savePosData, clearPosData, clearHistory } = useStore();
+  const {
+    apiKey, supplierMappings, posItems, departments, learningLayer,
+    saveApiKey, saveSupplierMappings, savePosItems, saveDepartments,
+    setLearningLayer, clearHistory,
+  } = useStore();
+
   const [keyVal, setKeyVal] = useState(apiKey);
   const [showKey, setShowKey] = useState(false);
   const [keySaved, setKeySaved] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [step, setStep] = useState('');
-  const [pdfError, setPdfError] = useState('');
+  const [processing, setProcessing] = useState(null); // which section is processing
+  const [progressMsg, setProgressMsg] = useState('');
+  const [stockMode, setStockMode] = useState('replace');
   const [pendingAction, setPendingAction] = useState(null);
-  const posFileRef = useRef();
+  const [errors, setErrors] = useState({});
 
-  const handlePdf = async (file) => {
-    setPdfError('');
-    setProcessing(true); setStep('Loading PDF...');
+  const mappingsRef = useRef();
+  const stockRef = useRef();
+  const deptsRef = useRef();
+
+  const setError = (key, msg) => setErrors(e => ({ ...e, [key]: msg }));
+  const clearError = (key) => setErrors(e => ({ ...e, [key]: '' }));
+
+  // -- API Key
+  const handleSaveKey = async () => {
+    await saveApiKey(keyVal.trim());
+    setKeySaved(true);
+    setTimeout(() => setKeySaved(false), 2000);
+  };
+
+  // -- Supplier Mappings
+  const handleMappingsPDF = async (file) => {
+    clearError('mappings'); setProcessing('mappings'); setProgressMsg('Loading PDF...');
     try {
-      const { items, supplierCount } = await parsePOSPdf(file, s => setStep(s));
-      savePosData({ items, aliases: posData?.aliases || {}, updatedAt: new Date().toISOString() });
-      setStep(`✓ ${items.length} items from ${supplierCount} supplier${supplierCount !== 1 ? 's' : ''}`);
+      const { items, supplierCount } = await parseSupplierMappingsPDF(file, msg => setProgressMsg(msg));
+      await saveSupplierMappings(items);
+      setProgressMsg(`✓ ${items.length} mappings from ${supplierCount} supplier${supplierCount !== 1 ? 's' : ''}`);
     } catch (err) {
-      setPdfError(err.message);
+      setError('mappings', err.message);
     } finally {
-      setProcessing(false);
-      setTimeout(() => setStep(''), 2500);
+      setProcessing(null);
+      setTimeout(() => setProgressMsg(''), 2500);
     }
   };
+
+  // -- POS Stock
+  const handleStockFile = async (file) => {
+    clearError('stock'); setProcessing('stock'); setProgressMsg('Loading...');
+    try {
+      const text = await file.text();
+      const { items } = await parsePOSStock(text, pct => setProgressMsg(`Parsing... ${pct}%`));
+      const merged = mergePOSStock(posItems, items, stockMode);
+      await savePosItems(merged);
+      setProgressMsg(`✓ ${merged.length} items (${stockMode})`);
+    } catch (err) {
+      setError('stock', err.message);
+    } finally {
+      setProcessing(null);
+      setTimeout(() => setProgressMsg(''), 2500);
+    }
+  };
+
+  // -- Departments
+  const handleDeptsFile = async (file) => {
+    clearError('depts'); setProcessing('depts'); setProgressMsg('Loading...');
+    try {
+      const text = await file.text();
+      const depts = parseDepartments(text);
+      await saveDepartments(depts);
+      setProgressMsg(`✓ ${depts.length} departments`);
+    } catch (err) {
+      setError('depts', err.message);
+    } finally {
+      setProcessing(null);
+      setTimeout(() => setProgressMsg(''), 2500);
+    }
+  };
+
+  const mappingsUpdatedAt = supplierMappings?.[0]?.updatedAt;
+  const learningCount = Object.keys(learningLayer || {}).length;
 
   return (
     <div style={{ paddingTop: 16 }}>
@@ -37,6 +94,7 @@ export default function Settings() {
         <Icon name="settings" size={20} /> Settings
       </h2>
 
+      {/* Section 1: API Key */}
       <div className="card">
         <div className="card-label">Anthropic API Key</div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -45,62 +103,136 @@ export default function Settings() {
           <button className="btn btn-ghost" style={{ padding: 8 }} onClick={() => setShowKey(v => !v)}><Icon name="eye" size={16} /></button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => {
-            saveApiKey(keyVal.trim());
-            setKeySaved(true);
-            setTimeout(() => setKeySaved(false), 2000);
-          }}>
-            Save Key
-          </button>
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={handleSaveKey}>Save Key</button>
           {keySaved && <span style={{ fontSize: 11, color: 'var(--green)' }}>✓ Saved</span>}
         </div>
       </div>
 
+      {/* Section 2: Data Sources */}
       <div className="card">
-        <div className="card-label">POS Stocklist</div>
-        {posData?.items?.length ? (
+        <div className="card-label">Data Sources</div>
+
+        {/* Supplier Mappings */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 4 }}>Supplier Mappings PDF</div>
+          {supplierMappings?.length ? (
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 6 }}>
+              <span style={{ color: 'var(--green)', fontWeight: 600 }}>{supplierMappings.length}</span> mappings loaded
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Not loaded</div>
+          )}
+          <input ref={mappingsRef} type="file" accept=".pdf" style={{ display: 'none' }}
+            onChange={e => { if (e.target.files[0]) handleMappingsPDF(e.target.files[0]); e.target.value = ''; }} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={processing === 'mappings'}
+              onClick={() => mappingsRef.current?.click()}>
+              {processing === 'mappings' ? <><span className="spinner">⟳</span> {progressMsg}</> : supplierMappings?.length ? 'Re-upload' : 'Upload PDF'}
+            </button>
+            {supplierMappings?.length > 0 && (
+              <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => saveSupplierMappings([])}>Clear</button>
+            )}
+          </div>
+          {errors.mappings && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{errors.mappings}</div>}
+          {processing === 'mappings' && progressMsg && !errors.mappings && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{progressMsg}</div>
+          )}
+        </div>
+
+        {/* POS Stock */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 4 }}>POS Stock File</div>
+          {posItems?.length ? (
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 6 }}>
+              <span style={{ color: 'var(--green)', fontWeight: 600 }}>{posItems.length}</span> items loaded
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Not loaded</div>
+          )}
+          <div style={{ marginBottom: 6 }}>
+            <select className="input" style={{ fontSize: 12, padding: '6px 8px', appearance: 'auto' }}
+              value={stockMode} onChange={e => setStockMode(e.target.value)}>
+              <option value="replace">Replace all</option>
+              <option value="add-new">Add new items only</option>
+              <option value="update">Update existing</option>
+            </select>
+          </div>
+          <input ref={stockRef} type="file" accept=".txt,.csv,.tsv" style={{ display: 'none' }}
+            onChange={e => { if (e.target.files[0]) handleStockFile(e.target.files[0]); e.target.value = ''; }} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={processing === 'stock'}
+              onClick={() => stockRef.current?.click()}>
+              {processing === 'stock' ? <><span className="spinner">⟳</span> {progressMsg}</> : posItems?.length ? 'Re-upload' : 'Upload File'}
+            </button>
+            {posItems?.length > 0 && (
+              <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => savePosItems([])}>Clear</button>
+            )}
+          </div>
+          {errors.stock && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{errors.stock}</div>}
+          {processing === 'stock' && progressMsg && !errors.stock && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{progressMsg}</div>
+          )}
+        </div>
+
+        {/* Departments */}
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 4 }}>Departments</div>
+          {departments?.length ? (
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 6 }}>
+              <span style={{ color: 'var(--green)', fontWeight: 600 }}>{departments.length}</span> departments loaded
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Not loaded</div>
+          )}
+          <input ref={deptsRef} type="file" accept=".txt,.csv,.tsv" style={{ display: 'none' }}
+            onChange={e => { if (e.target.files[0]) handleDeptsFile(e.target.files[0]); e.target.value = ''; }} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={processing === 'depts'}
+              onClick={() => deptsRef.current?.click()}>
+              {processing === 'depts' ? <><span className="spinner">⟳</span> {progressMsg}</> : departments?.length ? 'Re-upload' : 'Upload File'}
+            </button>
+            {departments?.length > 0 && (
+              <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => saveDepartments([])}>Clear</button>
+            )}
+          </div>
+          {errors.depts && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{errors.depts}</div>}
+        </div>
+      </div>
+
+      {/* Section 3: Learning Layer */}
+      <div className="card">
+        <div className="card-label">Learning Layer</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>
+          <span style={{ color: 'var(--green)', fontWeight: 600 }}>{learningCount}</span> learned mapping{learningCount !== 1 ? 's' : ''}
+        </div>
+        {learningCount > 0 && (
           <>
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
-              <span style={{ color: 'var(--green)', fontWeight: 600 }}>{posData.items.length}</span> items loaded
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>Last updated: {fmt(posData.updatedAt)}</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input ref={posFileRef} type="file" accept=".pdf" style={{ display: 'none' }}
-                onChange={e => { if (e.target.files[0]) handlePdf(e.target.files[0]); e.target.value = ''; }} />
-              <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={processing} onClick={() => posFileRef.current?.click()}>
-                {processing ? <><span className="spinner">⟳</span> {step}</> : step || 'Re-upload PDF'}
-              </button>
-              <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => setPendingAction(pendingAction === 'pos' ? null : 'pos')}>Clear</button>
-            </div>
-            {pdfError && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 6 }}>{pdfError}</div>}
-            {pendingAction === 'pos' && (
+            <button className="btn btn-danger" style={{ fontSize: 12 }}
+              onClick={() => setPendingAction(pendingAction === 'learning' ? null : 'learning')}>
+              Clear Learned Mappings
+            </button>
+            {pendingAction === 'learning' && (
               <div style={{ marginTop: 8, padding: '8px 10px', background: '#f4433612', border: '1px solid #f4433630', borderRadius: 6, fontSize: 12 }}>
-                <div style={{ marginBottom: 8, color: 'var(--red)' }}>Clear POS stocklist data?</div>
+                <div style={{ marginBottom: 8, color: 'var(--red)' }}>Clear all {learningCount} learned mappings?</div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button className="btn btn-danger" style={{ fontSize: 11, padding: '5px 12px' }}
-                    onClick={() => { clearPosData(); setPendingAction(null); }}>Yes, clear</button>
+                    onClick={() => { setLearningLayer({}); setPendingAction(null); }}>Yes, clear</button>
                   <button className="btn btn-ghost" style={{ fontSize: 11, padding: '5px 12px' }}
                     onClick={() => setPendingAction(null)}>Cancel</button>
                 </div>
               </div>
             )}
           </>
-        ) : (
-          <>
-            <p style={{ fontSize: 12, color: 'var(--text3)', margin: '0 0 8px' }}>No POS stocklist loaded.</p>
-            <input ref={posFileRef} type="file" accept=".pdf" style={{ display: 'none' }}
-              onChange={e => { if (e.target.files[0]) handlePdf(e.target.files[0]); e.target.value = ''; }} />
-            <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={processing} onClick={() => posFileRef.current?.click()}>
-              {processing ? <><span className="spinner">⟳</span> {step}</> : step || 'Upload POS PDF'}
-            </button>
-            {pdfError && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 6 }}>{pdfError}</div>}
-          </>
         )}
       </div>
 
+      {/* Section 4: Danger Zone */}
       <div className="card">
-        <div className="card-label">Data Management</div>
-        <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => setPendingAction(pendingAction === 'history' ? null : 'history')}>Clear All History</button>
+        <div className="card-label">Danger Zone</div>
+        <button className="btn btn-danger" style={{ fontSize: 12 }}
+          onClick={() => setPendingAction(pendingAction === 'history' ? null : 'history')}>
+          Clear All History
+        </button>
         {pendingAction === 'history' && (
           <div style={{ marginTop: 8, padding: '8px 10px', background: '#f4433612', border: '1px solid #f4433630', borderRadius: 6, fontSize: 12 }}>
             <div style={{ marginBottom: 8, color: 'var(--red)' }}>Delete all delivery history permanently?</div>
