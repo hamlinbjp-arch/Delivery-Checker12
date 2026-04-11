@@ -23,11 +23,13 @@ ABSOLUTE RULES — violating these is worse than saying nothing:
 
 Output ONLY a raw JSON array. No markdown. No text outside the JSON.`;
 
-async function analyzePhotoItems(photoIdx, set, get, { autoOpen = true } = {}) {
+async function analyzePhotoItems(photoIdx, blobUrl, set, get, analyzingRef, { autoOpen = true } = {}) {
+  if (analyzingRef?.current?.has(photoIdx)) return;
+  analyzingRef?.current?.add(photoIdx);
+
   const state = get();
   const file = state.itemPhotos[photoIdx];
-  if (!file) return;
-  const blobUrl = URL.createObjectURL(file);
+  if (!file) { analyzingRef?.current?.delete(photoIdx); return; }
 
   const allRemaining = getRemainingItems(state.results, state.itemPhotoMap);
   // Limit to first MAX_ITEMS_PER_ANALYSIS to keep prompt fast
@@ -87,6 +89,8 @@ async function analyzePhotoItems(photoIdx, set, get, { autoOpen = true } = {}) {
     if (autoOpen || get().photoAnalysisModal?.photoIdx === photoIdx) {
       set({ photoAnalysisModal: { ...get().photoAnalysisModal, analyzing: false, results: [{ name: 'Analysis failed', visible: false, confidence: 0, reason: err.message }] } });
     }
+  } finally {
+    analyzingRef?.current?.delete(photoIdx);
   }
 }
 
@@ -106,7 +110,10 @@ function CroppedThumbnail({ blobUrl, bbox }) {
       const sh = Math.min(img.height * bbox.h / 100 + pad * 2, img.height - sy);
       const canvas = document.createElement('canvas');
       canvas.width = sw; canvas.height = sh;
-      canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, sw, sh);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
       if (!cancelled) setCropUrl(canvas.toDataURL('image/jpeg', 0.9));
     };
     img.src = blobUrl;
@@ -381,6 +388,21 @@ export default function VerifyStep() {
   const store = useStore();
   const { results, itemPhotoMap, itemPhotos, bulkPhotoResults, selectedSupplier, set, resetDelivery } = store;
   const bulkRef = useRef();
+  const blobCacheRef = useRef({});
+  const analyzingRef = useRef(new Set());
+
+  // Revoke all cached blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(blobCacheRef.current).forEach(url => { try { URL.revokeObjectURL(url); } catch {} });
+    };
+  }, []);
+
+  const getBlobUrl = (f, i) => {
+    if (!blobCacheRef.current[i]) blobCacheRef.current[i] = URL.createObjectURL(f);
+    return blobCacheRef.current[i];
+  };
+
   const items = results || [];
   const confirmed = items.filter(i => (itemPhotoMap[i.id] || []).length > 0).length;
   const remaining = items.length - confirmed;
@@ -395,18 +417,21 @@ export default function VerifyStep() {
     if (!newFiles.length) return;
     const startIdx = itemPhotos.length;
     set({ itemPhotos: [...itemPhotos, ...newFiles] });
-    // Auto-analyze the first new photo immediately
-    setTimeout(() => analyzePhotoItems(startIdx, set, useStore.getState), 50);
+    // Auto-analyze the first new photo immediately using cached URL
+    setTimeout(() => {
+      const blobUrl = getBlobUrl(newFiles[0], startIdx);
+      analyzePhotoItems(startIdx, blobUrl, set, useStore.getState, analyzingRef);
+    }, 50);
   };
 
   const handleAnalyze = (idx) => {
+    const blobUrl = getBlobUrl(itemPhotos[idx], idx);
     if (bulkPhotoResults[idx]) {
-      const url = URL.createObjectURL(itemPhotos[idx]);
       const allRemaining = getRemainingItems(results, itemPhotoMap);
       const remainingItems = allRemaining.slice(0, MAX_ITEMS_PER_ANALYSIS);
-      set({ photoAnalysisModal: { photoIdx: idx, blobUrl: url, analyzing: false, results: bulkPhotoResults[idx], remainingItems, allRemaining, hiddenCount: allRemaining.length - remainingItems.length } });
+      set({ photoAnalysisModal: { photoIdx: idx, blobUrl, analyzing: false, results: bulkPhotoResults[idx], remainingItems, allRemaining, hiddenCount: allRemaining.length - remainingItems.length } });
     } else {
-      analyzePhotoItems(idx, set, useStore.getState);
+      analyzePhotoItems(idx, blobUrl, set, useStore.getState, analyzingRef);
     }
   };
 
@@ -421,6 +446,10 @@ export default function VerifyStep() {
         <button className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12 }} onClick={resetDelivery}>New</button>
       </div>
       <div className="step-bar"><div className="step-pill active" /><div className="step-pill" /></div>
+      <button className="btn btn-ghost" style={{ width: '100%', marginBottom: 12, fontSize: 13 }}
+        onClick={() => set({ deliveryStep: 'pos', resultsSearch: '' })}>
+        Skip to POS Matching →
+      </button>
 
       <div className="stats" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
         <div className="stat"><div className="stat-val">{items.length}</div><div className="stat-label">Total</div></div>
@@ -443,7 +472,7 @@ export default function VerifyStep() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {itemPhotos.length ? itemPhotos.map((f, i) => {
             const res = bulkPhotoResults[i];
-            const url = URL.createObjectURL(f);
+            const url = getBlobUrl(f, i);
             const foundCount = res ? res.filter(r => r.visible && r.name !== 'UNIDENTIFIED' && r.confidence >= 90).length : null;
             const pendingCount = res ? res.filter(r => r.visible && (r.name === 'UNIDENTIFIED' || r.confidence < 90)).length : null;
             const hasPending = pendingCount > 0;

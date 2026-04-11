@@ -4,9 +4,15 @@ let pdfjsLib = null;
 
 async function getPdfJs() {
   if (pdfjsLib) return pdfjsLib;
-  pdfjsLib = await import('pdfjs-dist');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
-  return pdfjsLib;
+  try {
+    const lib = await import('pdfjs-dist');
+    lib.GlobalWorkerOptions.workerSrc = workerSrc;
+    pdfjsLib = lib;
+    return pdfjsLib;
+  } catch (e) {
+    pdfjsLib = null;
+    throw new Error('PDF engine failed to load: ' + e.message);
+  }
 }
 
 // Scan the first 2 pages of a delivery PDF and return the best-matching supplier name,
@@ -57,7 +63,10 @@ export async function parsePOSPdf(file, onProgress) {
   let currentSupplier = '';
 
   for (let i = 1; i <= totalPages; i++) {
-    if (i % 20 === 0) onProgress?.(`Parsing page ${i}/${totalPages}...`);
+    if (i === 1 || i % 10 === 0) {
+      onProgress?.(`Parsing page ${i}/${totalPages}...`);
+      await new Promise(r => setTimeout(r, 0));
+    }
     const page = await pdf.getPage(i);
     const tc = await page.getTextContent();
 
@@ -96,5 +105,6 @@ export async function parsePOSPdf(file, onProgress) {
   }
 
   if (allItems.length === 0) throw new Error('No items found — PDF may be scanned/image-based. Try a text-based export from Idealpos.');
-  return allItems;
+  const supplierCount = new Set(allItems.map(i => i.supplier).filter(Boolean)).size;
+  return { items: allItems, supplierCount, pageCount: totalPages };
 }

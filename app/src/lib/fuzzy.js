@@ -40,9 +40,14 @@ export function fuzzyScore(a, b) {
   return Math.round(matched / Math.max(ta.length, tb.length) * 100);
 }
 
-export function findBestPOSMatch(itemName, posList, mappings = {}, aliases = {}) {
+export function findBestPOSMatch(itemName, posList, mappings = {}, aliases = {}, supplierCode = '') {
   if (!posList || !posList.length) return { code: '', name: '', confidence: 0 };
   const key = normalize(itemName);
+  // 0. Exact supplier code match
+  if (supplierCode) {
+    const e = posList.find(p => p.code === supplierCode);
+    if (e) return { code: e.code, name: e.description, confidence: 100 };
+  }
   // 1. Supplier-learned mappings
   const mc = mappings[key];
   if (mc) { const e = posList.find(p => p.code === mc); if (e) return { code: e.code, name: e.description, confidence: 98, learned: true }; }

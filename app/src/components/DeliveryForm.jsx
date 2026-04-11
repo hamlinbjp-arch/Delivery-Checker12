@@ -8,8 +8,8 @@ import { detectSupplierFromPDF } from '../lib/pdfParser';
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-async function doProcessDelivery(state, set) {
-  const { apiKey, reportFiles, itemPhotos, scannedBarcodes, selectedSupplier, deliveryNotes, posData, suppliers } = state;
+async function doProcessDelivery(getState, set) {
+  const { apiKey, reportFiles, itemPhotos, scannedBarcodes, selectedSupplier, deliveryNotes, posData, suppliers } = getState();
   set({ processing: true, processStep: 'Reading files...' });
   try {
     const content = [];
@@ -63,12 +63,12 @@ Include EVERY line item.` });
       if (scannedBarcodes.length && allPosItems.length) {
         for (const bc of scannedBarcodes) { const pm = allPosItems.find(p => p.code === bc); if (pm && fuzzyScore(cleanName, pm.description) > 40) { bcMatch = pm; break; } }
       }
-      const posMatch = bcMatch ? { code: bcMatch.code, name: bcMatch.description, confidence: 99 } : findBestPOSMatch(cleanName, posItemsForMatch, mappings, aliases);
+      const posMatch = bcMatch ? { code: bcMatch.code, name: bcMatch.description, confidence: 99 } : findBestPOSMatch(cleanName, posItemsForMatch, mappings, aliases, supplierCode);
       const isNew = posMatch.confidence < 45;
       return {
         id: uid(), name: cleanName, supplierCode, pageNumber, qtyExpected: item.qtyExpected || 0,
         posCode: posMatch.code, posName: posMatch.name, confidence: posMatch.confidence,
-        status: isNew ? 'NEW ITEM' : 'Matched', damaged: false, damageNote: '', manualNotes: '',
+        status: isNew ? 'NEW ITEM' : 'Matched', damaged: false, damageNote: '', manualNotes: '', qtyReceived: item.qtyExpected || 0,
         learned: posMatch.learned || false, aliased: posMatch.aliased || false,
         posSupplier: posItemsForMatch.find(p => p.code === posMatch.code)?.supplier || '',
       };
@@ -83,8 +83,7 @@ Include EVERY line item.` });
 }
 
 export default function DeliveryForm() {
-  const state = useStore();
-  const { suppliers, selectedSupplier, deliveryNotes, reportFiles, itemPhotos, scannedBarcodes, processing, processStep, apiKey, posData, set } = state;
+  const { suppliers, selectedSupplier, deliveryNotes, reportFiles, itemPhotos, scannedBarcodes, processing, processStep, apiKey, posData, set } = useStore();
   const pdfRef = useRef();
   const imgRef = useRef();
   const photoCamRef = useRef();
@@ -206,7 +205,7 @@ export default function DeliveryForm() {
         className={`btn${!processing && reportFiles.length && apiKey ? ' btn-primary' : ''}`}
         style={{ width: '100%', padding: 16, fontSize: 16, fontWeight: 700, border: `2px solid ${reportFiles.length ? 'var(--green-dark)' : 'var(--border)'}` }}
         disabled={processing || !reportFiles.length || !apiKey}
-        onClick={() => doProcessDelivery(state, set)}>
+        onClick={() => doProcessDelivery(useStore.getState, set)}>
         {processing ? <><span className="spinner">⟳</span> {processStep}</> : <><Icon name="zap" size={20} /> Check Delivery</>}
       </button>
       {!apiKey && <p style={{ fontSize: 12, color: 'var(--amber)', marginTop: 8, textAlign: 'center' }}>Set your API key in Settings first</p>}
