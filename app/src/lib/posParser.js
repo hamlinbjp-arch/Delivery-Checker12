@@ -50,7 +50,7 @@ export async function parsePOSStock(text, onProgress) {
         else if (h === 'DEPARTMENT' || h === 'DEPT' || h === 'DEPT CODE') headerIndexes.department = j;
         else if (h === 'PRICE' || h === 'SELL PRICE' || h === 'UNIT PRICE') headerIndexes.price = j;
         else if (h === 'SUPPLIER CODE' || h === 'SUPPLIER' || h === 'SUP CODE') headerIndexes.supplierCode = j;
-        else if (h === 'BARCODE' || h === 'EAN' || h === 'UPC') headerIndexes.barcode = j;
+        else if (h === 'SCANCODE' || h === 'SCAN CODE' || h === 'BARCODE' || h === 'EAN' || h === 'UPC') headerIndexes.scanCode = j;
       }
       // Fallback: use positional indexes if named not found
       if (headerIndexes.code === undefined) headerIndexes.code = 0;
@@ -70,7 +70,7 @@ export async function parsePOSStock(text, onProgress) {
       department: headerIndexes.department !== undefined ? (fields[headerIndexes.department] || '').trim() : '',
       price: headerIndexes.price !== undefined ? parseFloat(fields[headerIndexes.price]) || 0 : 0,
       supplierCode: headerIndexes.supplierCode !== undefined ? (fields[headerIndexes.supplierCode] || '').trim() : '',
-      barcode: headerIndexes.barcode !== undefined ? (fields[headerIndexes.barcode] || '').trim() : '',
+      scanCode: headerIndexes.scanCode !== undefined ? (fields[headerIndexes.scanCode] || '').trim() : '',
     };
     items.push(item);
 

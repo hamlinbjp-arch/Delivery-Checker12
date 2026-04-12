@@ -54,7 +54,7 @@ export default function DeliveryForm() {
       const extracted = await extractInvoiceItems(apiKey, invoiceFiles);
 
       set({ processStep: 'matching' });
-      const matched = matchAllItems(extracted, { supplierMappings, posItems, learningLayer });
+      const matched = matchAllItems(extracted, { supplierMappings, posItems, learningLayer, supplierName: supplier });
 
       await setDeliveryItems(matched);
       await updateDeliveryStep('review');

@@ -9,14 +9,16 @@ const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month
 
 export default function Settings() {
   const {
-    apiKey, supplierMappings, posItems, departments, learningLayer,
-    saveApiKey, saveSupplierMappings, savePosItems, saveDepartments,
+    apiKey, locationName, supplierMappings, posItems, departments, learningLayer,
+    saveApiKey, saveLocationName, saveSupplierMappings, savePosItems, saveDepartments,
     setLearningLayer, clearHistory,
   } = useStore();
 
   const [keyVal, setKeyVal] = useState(apiKey);
   const [showKey, setShowKey] = useState(false);
   const [keySaved, setKeySaved] = useState(false);
+  const [locationVal, setLocationVal] = useState(locationName);
+  const [locationSaved, setLocationSaved] = useState(false);
   const [processing, setProcessing] = useState(null); // which section is processing
   const [progressMsg, setProgressMsg] = useState('');
   const [stockMode, setStockMode] = useState('replace');
@@ -29,6 +31,13 @@ export default function Settings() {
 
   const setError = (key, msg) => setErrors(e => ({ ...e, [key]: msg }));
   const clearError = (key) => setErrors(e => ({ ...e, [key]: '' }));
+
+  // -- Location Name
+  const handleSaveLocation = async () => {
+    await saveLocationName(locationVal.trim());
+    setLocationSaved(true);
+    setTimeout(() => setLocationSaved(false), 2000);
+  };
 
   // -- API Key
   const handleSaveKey = async () => {
@@ -93,6 +102,21 @@ export default function Settings() {
       <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
         <Icon name="settings" size={20} /> Settings
       </h2>
+
+      {/* Section 0: Store Settings */}
+      <div className="card">
+        <div className="card-label">Store Settings</div>
+        <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>Location Name</label>
+        <input className="input" placeholder="e.g. MAIN STORE" value={locationVal}
+          onChange={e => setLocationVal(e.target.value)} style={{ fontSize: 16 }} />
+        <div style={{ fontSize: 11, color: 'var(--text3)', margin: '4px 0 8px' }}>
+          Must match your Idealpos Location Name exactly
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={handleSaveLocation}>Save</button>
+          {locationSaved && <span style={{ fontSize: 11, color: 'var(--green)' }}>✓ Saved</span>}
+        </div>
+      </div>
 
       {/* Section 1: API Key */}
       <div className="card">

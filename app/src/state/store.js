@@ -17,8 +17,9 @@ const persistDelivery = debounce(async (delivery) => {
 export const useStore = create((set, get) => ({
   // ── Persisted state ──────────────────────────────────────────────
   apiKey: '',
+  locationName: '',         // Idealpos Location Name for export filenames
   supplierMappings: [],     // [{ supplier, code, description, price, department? }]
-  posItems: [],             // FILE-STOCK-4 items: [{ code, description, department, price, supplierCode, barcode }]
+  posItems: [],             // FILE-STOCK-4 items: [{ code, description, department, price, supplierCode, scanCode }]
   departments: [],          // [{ id, name }]
   learningLayer: {},        // { normalizedInvoiceName: posCode }
   activeDelivery: null,     // { step, supplier, date, items:[], notes } | null
@@ -41,6 +42,12 @@ export const useStore = create((set, get) => ({
   async saveApiKey(key) {
     await ls.set('api-key', key);
     set({ apiKey: key });
+  },
+
+  // ── Location Name ────────────────────────────────────────────────
+  async saveLocationName(name) {
+    await ls.set('location-name', name);
+    set({ locationName: name });
   },
 
   // ── Supplier Mappings ────────────────────────────────────────────
@@ -66,8 +73,11 @@ export const useStore = create((set, get) => ({
     await ls.set('learning-layer', ll);
     set({ learningLayer: ll });
   },
-  async addLearning(normalizedName, posCode) {
-    const ll = { ...get().learningLayer, [normalizedName]: posCode };
+  async addLearning({ invoiceName, posCode }) {
+    if (!posCode) return;
+    const key = (invoiceName || '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!key) return;
+    const ll = { ...get().learningLayer, [key]: posCode };
     await ls.set('learning-layer', ll);
     set({ learningLayer: ll });
   },
@@ -160,6 +170,7 @@ export const useStore = create((set, get) => ({
 export async function initStore() {
   const [
     apiKey,
+    locationName,
     supplierMappings,
     posItems,
     departments,
@@ -169,6 +180,7 @@ export async function initStore() {
     setupComplete,
   ] = await Promise.all([
     ls.get('api-key'),
+    ls.get('location-name'),
     ls.get('supplier-mappings'),
     ls.get('pos-items'),
     ls.get('departments'),
@@ -180,6 +192,7 @@ export async function initStore() {
 
   useStore.setState({
     apiKey: apiKey || '',
+    locationName: locationName || '',
     supplierMappings: supplierMappings || [],
     posItems: posItems || [],
     departments: departments || [],
