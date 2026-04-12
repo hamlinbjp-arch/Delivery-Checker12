@@ -113,7 +113,7 @@ export async function parsePOSPdf(file, onProgress) {
 }
 
 // Parse a Supplier Mappings PDF (Idealpos supplier-code-to-stock-code report).
-// Returns { items: [{ supplier, code, description, price }], supplierCount, pageCount }
+// Returns { items: [{ supplier, supplierCode, description, stockCode }], supplierCount, pageCount }
 export async function parseSupplierMappingsPDF(file, onProgress) {
   const lib = await getPdfJs();
   let arrayBuffer;
@@ -125,9 +125,7 @@ export async function parseSupplierMappingsPDF(file, onProgress) {
   const allItems = [];
   let currentSupplier = '';
 
-  // Item row: numeric code, description, optional price
-  const itemRow = /^(\d{3,7})\s+(.+?)(?:\s{2,}|\t)(\d+\.\d{2})?/;
-  // Supplier header: all-caps line, no price, length 3–60
+  // Supplier header: all-caps line, length 3–60
   const supplierHeader = /^[A-Z][A-Z0-9\s&'.,/()-]{2,58}$/;
 
   onProgress?.('Loading PDF...');
@@ -153,16 +151,37 @@ export async function parseSupplierMappingsPDF(file, onProgress) {
 
     for (const y of Object.keys(bands).map(Number).sort((a, b) => b - a)) {
       const parts = bands[y].sort((a, b) => a.x - b.x);
-      const line = parts.map(p => p.text).join(' ').trim();
 
-      const m = line.match(itemRow);
-      if (m) {
-        const code = m[1];
-        const description = m[2].trim();
-        const price = m[3] ? parseFloat(m[3]) : undefined;
-        allItems.push({ supplier: currentSupplier, code, description, price });
-      } else if (supplierHeader.test(line) && line === line.toUpperCase() && line.length >= 3) {
-        currentSupplier = line.trim();
+      // Reconstruct line; insert 3 spaces where x-gap between items exceeds ~20px
+      // so that split(/\s{2,}/) reliably separates columns even if pdf.js joins
+      // adjacent text runs without whitespace padding.
+      let line = parts[0].text;
+      for (let j = 1; j < parts.length; j++) {
+        const estimatedPrevEnd = parts[j - 1].x + parts[j - 1].text.trimEnd().length * 7;
+        const gap = parts[j].x - estimatedPrevEnd;
+        line += (gap > 20 ? '   ' : ' ') + parts[j].text;
+      }
+      line = line.trim();
+
+      // Split on 2+ spaces to get columns:
+      // [0] supplierCode  [1] description  [n-3] stockCode  [n-2] "1"  [n-1] "Units"
+      const cols = line.split(/\s{2,}/);
+      if (cols.length >= 3 && /^\d{3,6}$/.test(cols[cols.length - 3])) {
+        const supplierCode = cols[0].trim();
+        const stockCode = cols[cols.length - 3];
+        const description = cols.slice(1, cols.length - 3).join(' ').trim();
+        if (supplierCode && description && stockCode) {
+          allItems.push({ supplier: currentSupplier, supplierCode, description, stockCode });
+          continue;
+        }
+      }
+
+      // Not an item row — check for supplier header (all-caps, no item structure)
+      if (supplierHeader.test(line) && line === line.toUpperCase() && line.length >= 3) {
+        const words = line.trim().split(/\s+/);
+        if (words.length >= 2 || (words.length === 1 && line.length > 7)) {
+          currentSupplier = line.trim();
+        }
       }
     }
   }
