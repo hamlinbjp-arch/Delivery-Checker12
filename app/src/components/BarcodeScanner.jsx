@@ -4,8 +4,12 @@ import Icon from '../lib/icons';
 export default function BarcodeScanner({ onResult, onClose }) {
   const videoRef = useRef();
   const readerRef = useRef(null);
+  const onResultRef = useRef(onResult);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('Starting camera...');
+
+  // Keep ref in sync without restarting the scanner
+  useEffect(() => { onResultRef.current = onResult; }, [onResult]);
 
   useEffect(() => {
     let active = true;
@@ -27,7 +31,7 @@ export default function BarcodeScanner({ onResult, onClose }) {
           if (!active) return;
           if (result) {
             try { navigator.vibrate(30); } catch {}
-            onResult(result.getText());
+            onResultRef.current(result.getText());
           }
         });
       } catch (e) {
@@ -46,7 +50,7 @@ export default function BarcodeScanner({ onResult, onClose }) {
       active = false;
       readerRef.current?.reset();
     };
-  }, [onResult]);
+  }, []); // stable — runs once only
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 200, display: 'flex', flexDirection: 'column' }}>

@@ -7,7 +7,7 @@ const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month
 function exportGeneric2(delivery, invoiceNumber, posItemsData, departmentsData) {
   const date = new Date().toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  const header1 = `${invoiceNumber},${date},,,,,,`;
+  const header1 = `${invoiceNumber},${date},,,,`;
   const header2 = 'Qty,Code,Description,Cost,Barcode,Category';
 
   const receivedStatuses = ['confirmed', 'short', 'damaged', 'swapped', 'bonus'];

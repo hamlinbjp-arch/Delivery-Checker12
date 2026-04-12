@@ -29,9 +29,7 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
       // If supplier name provided, also filter by matching supplier
       if (normSupplierName) {
         const mName = (m.supplier || '').toLowerCase().trim();
-        return mName === normSupplierName
-          || mName.includes(normSupplierName)
-          || normSupplierName.includes(mName);
+        return mName === normSupplierName;  // exact match only — substring matches are not auto-accepted
       }
       return true;
     });
