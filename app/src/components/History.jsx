@@ -20,7 +20,19 @@ export default function History() {
 
   const filtered = history.filter(h => {
     if (supplierFilter && h.supplier !== supplierFilter) return false;
-    if (q && !(h.supplier || '').toLowerCase().includes(q.toLowerCase()) && !fmt(h.date).toLowerCase().includes(q.toLowerCase())) return false;
+    if (q) {
+      const lq = q.toLowerCase();
+      const matchesHeader =
+        (h.supplier || '').toLowerCase().includes(lq) ||
+        fmt(h.date).toLowerCase().includes(lq);
+      const matchesItem = (h.items || []).some(item =>
+        (item.posDescription || '').toLowerCase().includes(lq) ||
+        (item.invoiceName || '').toLowerCase().includes(lq) ||
+        (item.posCode || '').includes(q) ||
+        (item.scanCode || '').includes(q)
+      );
+      if (!matchesHeader && !matchesItem) return false;
+    }
     return true;
   });
 

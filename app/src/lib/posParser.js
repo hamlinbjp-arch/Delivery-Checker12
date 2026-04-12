@@ -48,7 +48,7 @@ export async function parsePOSStock(text, onProgress) {
         if (h === 'CODE' || h === 'STOCK CODE' || h === 'ITEM CODE') headerIndexes.code = j;
         else if (h === 'DESCRIPTION' || h === 'ITEM DESCRIPTION' || h === 'NAME') headerIndexes.description = j;
         else if (h === 'DEPARTMENT' || h === 'DEPT' || h === 'DEPT CODE') headerIndexes.department = j;
-        else if (h === 'PRICE' || h === 'SELL PRICE' || h === 'UNIT PRICE') headerIndexes.price = j;
+        else if (h === 'PRICE1' || h === 'PRICE' || h === 'SELL PRICE' || h === 'UNIT PRICE') headerIndexes.price = j;
         else if (h === 'SUPPLIER CODE' || h === 'SUPPLIER' || h === 'SUP CODE') headerIndexes.supplierCode = j;
         else if (h === 'SCANCODE' || h === 'SCAN CODE' || h === 'BARCODE' || h === 'EAN' || h === 'UPC') headerIndexes.scanCode = j;
       }

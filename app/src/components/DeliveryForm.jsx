@@ -17,6 +17,7 @@ export default function DeliveryForm() {
   const [supplier, setSupplier] = useState(activeDelivery?.supplier || '');
   const [date, setDate] = useState(activeDelivery?.date ? activeDelivery.date.slice(0, 10) : new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState(activeDelivery?.notes || '');
+  const [customSupplier, setCustomSupplier] = useState('');
   const [invoiceFiles, setInvoiceFiles] = useState([]);
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState('');
@@ -46,7 +47,8 @@ export default function DeliveryForm() {
     setError('');
 
     // Initialize active delivery in store
-    await startDelivery(supplier);
+    const effectiveSupplier = supplier === '__other__' ? customSupplier.trim() : supplier;
+    await startDelivery(effectiveSupplier);
     if (notes) await setDeliveryNotes(notes);
 
     try {
@@ -54,7 +56,7 @@ export default function DeliveryForm() {
       const extracted = await extractInvoiceItems(apiKey, invoiceFiles);
 
       set({ processStep: 'matching' });
-      const matched = matchAllItems(extracted, { supplierMappings, posItems, learningLayer, supplierName: supplier });
+      const matched = matchAllItems(extracted, { supplierMappings, posItems, learningLayer, supplierName: effectiveSupplier });
 
       await setDeliveryItems(matched);
       await updateDeliveryStep('review');
@@ -98,7 +100,9 @@ export default function DeliveryForm() {
         )}
         {supplier === '__other__' && (
           <input className="input" style={{ marginTop: 8 }} placeholder="Type supplier name"
-            onChange={e => setSupplier(e.target.value)} autoFocus />
+            value={customSupplier}
+            onChange={e => setCustomSupplier(e.target.value)}
+            autoFocus />
         )}
       </div>
 

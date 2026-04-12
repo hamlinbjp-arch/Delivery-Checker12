@@ -51,6 +51,8 @@ export default function Setup() {
   };
 
   const completeSetup = async () => {
+    // Write sync flag first so fast-refresh hydration sees it immediately
+    localStorage.setItem('setup-complete', 'true');
     await ls.set('setup-complete', true);
     set({ setupComplete: true });
   };

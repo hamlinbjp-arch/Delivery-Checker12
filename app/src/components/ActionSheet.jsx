@@ -11,22 +11,11 @@ export default function ActionSheet({ item, onAction, onClose }) {
   const [damageNote, setDamageNote] = useState(item.damageNote || '');
   const [swapQuery, setSwapQuery] = useState('');
   const [swapResults, setSwapResults] = useState([]);
-  const [confirmedPrice, setConfirmedPrice] = useState(null);
-
   const name = item.posDescription || item.invoiceName || '(unknown)';
 
   const handleSwapSearch = (q) => {
     setSwapQuery(q);
     setSwapResults(q.length >= 2 ? searchPosItems(q, posItems) : []);
-  };
-
-  const handleConfirm = () => {
-    if (item.posPrice > 0) {
-      setConfirmedPrice(item.posPrice);
-      setTimeout(() => { onAction(item.id, { status: 'confirmed' }); }, 1500);
-    } else {
-      onAction(item.id, { status: 'confirmed' });
-    }
   };
 
   const handleBarcodeResult = (barcode) => {
@@ -56,19 +45,10 @@ export default function ActionSheet({ item, onAction, onClose }) {
           {item.posCode && <span style={{ marginLeft: 8, fontFamily: 'var(--font-mono)' }}>{item.posCode}</span>}
         </div>
 
-        {confirmedPrice && (
-          <div style={{ padding: 24, textAlign: 'center' }}>
-            <div style={{ fontSize: 14, color: 'var(--text2)', marginBottom: 8 }}>Price to apply:</div>
-            <div style={{ fontSize: 48, fontWeight: 800, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
-              ${confirmedPrice.toFixed(2)}
-            </div>
-          </div>
-        )}
-
-        {!confirmedPrice && mode === 'main' && (
+        {mode === 'main' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <button className="btn" style={{ background: 'var(--green)', color: '#fff', padding: 14, fontWeight: 700 }}
-              onClick={handleConfirm}>
+              onClick={() => onAction(item.id, { status: 'confirmed' })}>
               ✓ Confirm
             </button>
             <button className="btn" style={{ background: 'var(--amber)', color: '#fff', padding: 14, fontWeight: 700 }}

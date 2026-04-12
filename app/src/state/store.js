@@ -166,6 +166,18 @@ export const useStore = create((set, get) => ({
   uid,
 }));
 
+// ── Flush pending debounced delivery save on page hide / unload ──────
+if (typeof window !== 'undefined') {
+  const flush = () => {
+    const ad = useStore.getState().activeDelivery;
+    if (ad) ls.set('active-delivery', ad);
+  };
+  window.addEventListener('beforeunload', flush);
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+  });
+}
+
 // ── initStore: load all persisted data before React renders ──────────
 export async function initStore() {
   const [
@@ -199,6 +211,7 @@ export async function initStore() {
     learningLayer: learningLayer || {},
     activeDelivery: activeDelivery || null,
     history: history || [],
-    setupComplete: setupComplete === true,
+    // Also check sync localStorage flag so fast refresh can't show setup again
+    setupComplete: setupComplete === true || localStorage.getItem('setup-complete') === 'true',
   });
 }

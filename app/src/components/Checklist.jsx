@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 import { searchPosItems, findByBarcode } from '../lib/matcher';
@@ -125,6 +125,14 @@ export default function Checklist() {
     haptic(30);
   };
 
+  // Clear barcode highlight after 2s, properly cleaned up on unmount
+  useEffect(() => {
+    if (barcodeHighlight) {
+      const t = setTimeout(() => setBarcodeHighlight(null), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [barcodeHighlight]);
+
   const handleBarcodeResult = (barcode) => {
     setShowScanner(false);
     const posItem = findByBarcode(barcode, posItems || []);
@@ -138,7 +146,6 @@ export default function Checklist() {
     );
     if (match) {
       setBarcodeHighlight(match.id);
-      setTimeout(() => setBarcodeHighlight(null), 2000);
       document.getElementById(`item-${match.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
       setSearchQuery(posItem.description);
@@ -186,8 +193,23 @@ export default function Checklist() {
   const confirmedItems = displayItems.filter(i => ['confirmed', 'short', 'damaged', 'swapped', 'missing'].includes(i.status));
   const setAsideItems = displayItems.filter(i => i.status === 'set-aside');
 
-  const [showConfirmed, setShowConfirmed] = useState(false);
-  const [showSetAside, setShowSetAside] = useState(false);
+  const [showConfirmed, setShowConfirmed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('checklist-ui-prefs'))?.showConfirmed ?? false; } catch { return false; }
+  });
+  const [showSetAside, setShowSetAside] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('checklist-ui-prefs'))?.showSetAside ?? false; } catch { return false; }
+  });
+
+  const toggleConfirmed = () => {
+    const v = !showConfirmed;
+    setShowConfirmed(v);
+    try { localStorage.setItem('checklist-ui-prefs', JSON.stringify({ showConfirmed: v, showSetAside })); } catch {}
+  };
+  const toggleSetAside = () => {
+    const v = !showSetAside;
+    setShowSetAside(v);
+    try { localStorage.setItem('checklist-ui-prefs', JSON.stringify({ showConfirmed, showSetAside: v })); } catch {}
+  };
 
   let firstUnmatchedSet = false;
 
@@ -308,7 +330,7 @@ export default function Checklist() {
       {confirmedItems.length > 0 && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', cursor: 'pointer', userSelect: 'none' }}
-            onClick={() => setShowConfirmed(v => !v)}>
+            onClick={toggleConfirmed}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)' }}>✅ Confirmed ({confirmedItems.length})</span>
             <span style={{ fontSize: 12, color: 'var(--text3)' }}>{showConfirmed ? '▲' : '▼'}</span>
           </div>
@@ -342,7 +364,7 @@ export default function Checklist() {
       {setAsideItems.length > 0 && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', cursor: 'pointer', userSelect: 'none' }}
-            onClick={() => setShowSetAside(v => !v)}>
+            onClick={toggleSetAside}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text3)' }}>📦 Set Aside ({setAsideItems.length})</span>
             <span style={{ fontSize: 12, color: 'var(--text3)' }}>{showSetAside ? '▲' : '▼'}</span>
           </div>

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import Icon from '../lib/icons';
+import { useStore } from '../state/store';
 import { searchPosItems } from '../lib/matcher';
 import { callClaude } from '../lib/claude';
 import { resizeImage } from '../lib/imageUtils';
@@ -35,8 +36,7 @@ Identify the product in the photo. Return ONLY a JSON object (no markdown):
       const parsed = JSON.parse(stripped);
       setSuggestion(parsed);
 
-      // Search posItems from store at call time
-      const { posItems } = (await import('../state/store')).useStore.getState();
+      const { posItems } = useStore.getState();
       const matches = searchPosItems(parsed.productName, posItems || []);
       setPosResults(matches);
     } catch (err) {

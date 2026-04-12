@@ -90,7 +90,7 @@ export default function ReviewStep() {
 
   const handleOverride = (id, posItem) => {
     if (!posItem) {
-      updateDeliveryItem(id, { posCode: null, posDescription: null, posPrice: null, matchLevel: null, matchSource: 'manual', matchConfidence: 0, status: 'unmatched' });
+      updateDeliveryItem(id, { posCode: null, posDescription: null, posPrice: null, matchLevel: null, matchSource: null, matchConfidence: 0, status: 'unmatched' });
     } else {
       updateDeliveryItem(id, {
         posCode: posItem.code,
