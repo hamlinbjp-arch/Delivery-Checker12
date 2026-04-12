@@ -17,14 +17,14 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
   };
 
   // Level 1: master table — supplier code lookup in supplier mappings
-  // supplierMappings is a flat array: [{ supplier, code, description, price }]
-  // where code is the supplier's item code (appears on their invoices)
+  // supplierMappings is a flat array: [{ supplier, supplierCode, description, stockCode }]
+  // supplierCode is the code on the supplier's invoice; stockCode is the Idealpos POS code
   if (item.supplierCode && supplierMappings?.length) {
-    const normInvoiceCode = stripZeros(item.supplierCode.trim());
+    const normInvoiceCode = stripZeros(item.supplierCode.toLowerCase().trim());
     const normSupplierName = (supplierName || '').toLowerCase().trim();
 
     const found = supplierMappings.find(m => {
-      const mCode = stripZeros((m.code || '').trim());
+      const mCode = stripZeros((m.supplierCode || '').toLowerCase().trim());
       if (mCode !== normInvoiceCode) return false;
       // If supplier name provided, also filter by matching supplier
       if (normSupplierName) {
@@ -37,12 +37,12 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
     });
 
     if (found) {
-      const posItem = posItems?.find(p => p.code === found.code) || null;
+      const posItem = posItems?.find(p => p.code === found.stockCode) || null;
       return {
         ...result,
-        posCode: found.code,
+        posCode: found.stockCode,
         posDescription: posItem?.description || found.description || '',
-        posPrice: posItem?.price ?? found.price ?? null,
+        posPrice: posItem?.price ?? null,
         matchLevel: 1,
         matchSource: 'master',
         matchConfidence: 100,
