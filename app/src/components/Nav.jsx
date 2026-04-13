@@ -1,5 +1,5 @@
 import Icon from '../lib/icons';
-import { useStore } from '../state/store';
+import { useStore, reviewCountSelector } from '../state/store';
 
 const TABS = [
   { id: 'delivery', icon: 'truck', label: 'Delivery' },
@@ -12,13 +12,7 @@ export default function Nav() {
   const page = useStore(s => s.page);
   const set = useStore(s => s.set);
   const hasActiveDelivery = useStore(s => s.activeDelivery !== null);
-  const reviewCount = useStore(s => {
-    const items = s.activeDelivery?.items || [];
-    return items.filter(i =>
-      i.status === 'flagged' || i.status === 'unmatched' ||
-      (i.status === 'pending' && (i.matchLevel == null || i.matchLevel >= 3))
-    ).length;
-  });
+  const reviewCount = useStore(reviewCountSelector);
 
   return (
     <div className="nav">

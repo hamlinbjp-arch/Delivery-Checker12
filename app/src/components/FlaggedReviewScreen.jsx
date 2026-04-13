@@ -221,11 +221,9 @@ export default function FlaggedReviewScreen() {
 
   const items = activeDelivery?.items || [];
 
+  // Show only items explicitly in the review queue: no match found, or user flagged for review
   const yellowItems = useMemo(() =>
-    items.filter(i =>
-      i.status === 'flagged' || i.status === 'unmatched' ||
-      (i.status === 'pending' && (i.matchLevel == null || i.matchLevel >= 3))
-    ),
+    items.filter(i => i.status === 'flagged' || i.status === 'unmatched'),
     [items]
   );
 

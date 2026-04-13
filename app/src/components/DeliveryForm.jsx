@@ -7,7 +7,7 @@ import { detectSupplierFromPDF } from '../lib/pdfParser';
 
 export default function DeliveryForm() {
   const {
-    apiKey, activeDelivery,
+    apiKey, activeDelivery, supplierMappings, supplierRecencyOrder, supplierUsageCounts,
     startDelivery, updateDeliveryStep, setDeliveryItems, setDeliveryNotes,
     set,
   } = useStore();
@@ -24,7 +24,13 @@ export default function DeliveryForm() {
   const pdfRef = useRef();
   const imgRef = useRef();
 
-  const uniqueSuppliers = [...new Set((supplierMappings || []).map(m => m.supplier).filter(Boolean))].sort();
+  // Supplier list: recency-ordered first, then remaining alphabetically
+  const allSuppliers = [...new Set((supplierMappings || []).map(m => m.supplier).filter(Boolean))];
+  const recencyOrder = supplierRecencyOrder || [];
+  const uniqueSuppliers = [
+    ...recencyOrder.filter(s => allSuppliers.includes(s)),
+    ...allSuppliers.filter(s => !recencyOrder.includes(s)).sort(),
+  ];
 
   const handleInvoiceFiles = async (files) => {
     const arr = Array.from(files);
@@ -86,7 +92,10 @@ export default function DeliveryForm() {
           <select className="input" style={{ appearance: 'auto' }} value={supplier}
             onChange={e => setSupplier(e.target.value)}>
             <option value="">Select supplier...</option>
-            {uniqueSuppliers.map(s => <option key={s} value={s}>{s}</option>)}
+            {uniqueSuppliers.map(s => {
+              const count = supplierUsageCounts?.[s]?.useCount;
+              return <option key={s} value={s}>{s}{count ? ` · ${count} order${count !== 1 ? 's' : ''}` : ''}</option>;
+            })}
             <option value="__other__">Other...</option>
           </select>
         ) : (

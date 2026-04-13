@@ -57,10 +57,12 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
     }
   }
 
-  // Level 2: learning layer — normalized invoice name → pos code
+  // Level 2: learning layer — normalized invoice name → pos code (or entry object)
   const normName = normalize(item.invoiceName || '');
   if (normName && learningLayer?.[normName]) {
-    const posCode = learningLayer[normName];
+    const entry = learningLayer[normName];
+    // Support both legacy string format and new object format { posCode, supplier, ... }
+    const posCode = typeof entry === 'string' ? entry : entry.posCode;
     const posItem = posItems?.find(p => p.code === posCode) || null;
     if (posItem) {
       return {

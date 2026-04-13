@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback } from 'react';
-import { useStore } from '../state/store';
+import { useStore, reviewCountSelector } from '../state/store';
 
 function haptic(p) { try { navigator.vibrate(p); } catch {} }
 
@@ -22,11 +22,8 @@ export default function DeliveryDashboard() {
 
   const items = activeDelivery?.items || [];
 
-  // Review queue count (X)
-  const reviewCount = useMemo(() =>
-    items.filter(i => i.status === 'flagged' || i.status === 'unmatched' ||
-      (i.status === 'pending' && (i.matchLevel == null || i.matchLevel >= 3))).length,
-    [items]);
+  // Review queue count (X) — single source of truth via reviewCountSelector
+  const reviewCount = useStore(reviewCountSelector);
 
   // Delivery complete: every item is grey (confirmed / new-item / short / etc.)
   const allDone = items.length > 0 && items.every(i => isGrey(i));

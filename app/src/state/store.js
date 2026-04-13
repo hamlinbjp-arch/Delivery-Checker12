@@ -11,8 +11,18 @@ function debounce(fn, ms) {
 
 // Debounced active-delivery persist (250ms)
 const persistDelivery = debounce(async (delivery) => {
-  await ls.set('active-delivery', delivery);
+  const result = await ls.set('active-delivery', delivery);
+  if (result === 'quota') {
+    useStore.getState().set({ storageError: 'quota' });
+  }
 }, 250);
+
+// Single source of truth for review badge count
+// X = items with status 'unmatched' (no POS match) OR 'flagged' (user sent to review)
+export const reviewCountSelector = (state) => {
+  const items = state.activeDelivery?.items || [];
+  return items.filter(i => i.status === 'unmatched' || i.status === 'flagged').length;
+};
 
 export const useStore = create((set, get) => ({
   // ── Persisted state ──────────────────────────────────────────────
@@ -40,6 +50,12 @@ export const useStore = create((set, get) => ({
 
   // ── Simple setter ────────────────────────────────────────────────
   set,
+
+  // ── Review count (single source of truth) ────────────────────────
+  getReviewCount() {
+    const items = get().activeDelivery?.items || [];
+    return items.filter(i => i.status === 'unmatched' || i.status === 'flagged').length;
+  },
 
   // ── Storage error ────────────────────────────────────────────────
   clearStorageError() { set({ storageError: null }); },
@@ -79,11 +95,13 @@ export const useStore = create((set, get) => ({
     await ls.set('learning-layer', ll);
     set({ learningLayer: ll });
   },
-  async addLearning({ invoiceName, posCode }) {
+  async addLearning({ invoiceName, posCode, supplier, posDescription, confirmedAt }) {
     if (!posCode) return;
     const key = (invoiceName || '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!key) return;
-    const ll = { ...get().learningLayer, [key]: posCode };
+    // Store full object so matcher and future features can use supplier/description context
+    const entry = { posCode, supplier: supplier || null, posDescription: posDescription || null, confirmedAt: confirmedAt || new Date().toISOString() };
+    const ll = { ...get().learningLayer, [key]: entry };
     await ls.set('learning-layer', ll);
     set({ learningLayer: ll });
   },
