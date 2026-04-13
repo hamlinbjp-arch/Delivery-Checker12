@@ -16,8 +16,6 @@ export default function DeliveryDashboard() {
     updateDeliveryItem, completeDelivery, cancelDelivery, set,
   } = useStore();
 
-  const [confirmCancel, setConfirmCancel] = useState(false);
-
   const [search, setSearch] = useState('');
   const [completing, setCompleting] = useState(false);
   const [completeDismissed, setCompleteDismissed] = useState(false);
@@ -76,11 +74,6 @@ export default function DeliveryDashboard() {
   };
 
   const confirmedCount = items.filter(i => isGrey(i)).length;
-
-  const handleCancel = async () => {
-    await cancelDelivery();
-    set({ page: 'delivery' });
-  };
 
   return (
     <div style={{ paddingTop: 8 }}>
@@ -153,36 +146,6 @@ export default function DeliveryDashboard() {
               Not yet
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Cancel / abandon delivery */}
-      {items.length === 0 && processStep !== 'extracting' ? (
-        <div style={{ marginBottom: 10 }}>
-          <button className="btn btn-ghost" style={{ width: '100%', fontSize: 13 }} onClick={handleCancel}>
-            ← New Delivery
-          </button>
-        </div>
-      ) : items.length > 0 && (
-        <div style={{ marginBottom: 10 }}>
-          {!confirmCancel ? (
-            <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--text3)' }}
-              onClick={() => setConfirmCancel(true)}>
-              Abandon delivery
-            </button>
-          ) : (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 12, color: 'var(--text2)' }}>Discard this delivery?</span>
-              <button className="btn" style={{ fontSize: 12, background: 'var(--red)', color: '#fff', border: 'none' }}
-                onClick={handleCancel}>
-                Yes, discard
-              </button>
-              <button className="btn btn-ghost" style={{ fontSize: 12 }}
-                onClick={() => setConfirmCancel(false)}>
-                Cancel
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -267,4 +230,4 @@ export default function DeliveryDashboard() {
 
     </div>
   );
-                      }
+}
