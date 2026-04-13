@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
-import { extractInvoiceItems } from '../lib/claude';
+import { extractInvoiceItemsWithRetry } from '../lib/claude';
 import { matchAllItems } from '../lib/matcher';
 import { detectSupplierFromPDF } from '../lib/pdfParser';
 
@@ -63,9 +63,9 @@ export default function DeliveryForm() {
 
     // Background extraction — fire and forget
     const filesSnapshot = [...invoiceFiles];
-    extractInvoiceItems(apiKey, filesSnapshot)
+    extractInvoiceItemsWithRetry(apiKey, filesSnapshot, () => set({ processStep: 'extracting', extractionError: null, extractingRetry: true }))
       .then(extracted => {
-        set({ processStep: 'matching' });
+        set({ processStep: 'matching', extractingRetry: false });
         const { supplierMappings: sm, posItems: pi, learningLayer: ll, matchCorrections: mc } = useStore.getState();
         const matched = matchAllItems(extracted, {
           supplierMappings: sm, posItems: pi, learningLayer: ll,
@@ -74,7 +74,7 @@ export default function DeliveryForm() {
         return setDeliveryItems(matched);
       })
       .then(() => set({ processStep: 'idle' }))
-      .catch(err => set({ processStep: 'idle', extractionError: err.message }));
+      .catch(err => set({ processStep: 'idle', extractingRetry: false, extractionError: err.message }));
   };
 
   return (

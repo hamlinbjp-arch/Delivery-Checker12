@@ -12,7 +12,7 @@ export const isGrey   = i => !isGreen(i) && !isYellow(i);
 
 export default function DeliveryDashboard() {
   const {
-    activeDelivery, processStep, extractionError,
+    activeDelivery, processStep, extractionError, extractingRetry,
     updateDeliveryItem, completeDelivery, set,
   } = useStore();
 
@@ -76,14 +76,14 @@ export default function DeliveryDashboard() {
       {processStep === 'extracting' && (
         <div style={{ background: 'var(--amber)', color: '#000', padding: '8px 14px', borderRadius: 8, marginBottom: 10, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="spinner" style={{ fontSize: 16 }}>⟳</span>
-          AI analyzing invoice… items loading
+          {extractingRetry ? 'AI analyzing invoice… retrying…' : 'AI analyzing invoice… items loading'}
         </div>
       )}
       {extractionError && (
         <div style={{ background: '#f4433614', border: '1px solid var(--red)', color: 'var(--red)', padding: '8px 14px', borderRadius: 8, marginBottom: 10, fontSize: 13 }}>
           ⚠ Extraction failed: {extractionError}
           <button className="btn btn-ghost" style={{ marginLeft: 8, fontSize: 11, color: 'var(--red)' }}
-            onClick={() => useStore.getState().set({ extractionError: null })}>Dismiss</button>
+            onClick={() => useStore.getState().set({ extractionError: null, processStep: 'idle', extractingRetry: false })}>Dismiss</button>
         </div>
       )}
 

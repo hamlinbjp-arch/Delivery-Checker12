@@ -41,6 +41,7 @@ export const useStore = create((set, get) => ({
   page: 'delivery',
   processStep: 'idle',
   extractionError: null,
+  extractingRetry: false,
   viewingHistoryId: null,
   storageError: null,
 
