@@ -49,7 +49,7 @@ export async function parsePOSStock(text, onProgress) {
         else if (h === 'DESCRIPTION' || h === 'ITEM DESCRIPTION' || h === 'NAME') headerIndexes.description = j;
         else if (h === 'DEPARTMENT' || h === 'DEPT' || h === 'DEPT CODE') headerIndexes.department = j;
         else if (h === 'PRICE1' || h === 'PRICE' || h === 'SELL PRICE' || h === 'UNIT PRICE') headerIndexes.price = j;
-        else if (h === 'SUPPLIER CODE' || h === 'SUPPLIER' || h === 'SUP CODE') headerIndexes.supplierCode = j;
+        else if (h === 'SUPPLIERSTOCKCODE' || h === 'SUPPLIER STOCK CODE' || h === 'SUPPLIER CODE' || h === 'SUP CODE') headerIndexes.supplierCode = j;
         else if (h === 'SCANCODE' || h === 'SCAN CODE' || h === 'BARCODE' || h === 'EAN' || h === 'UPC') headerIndexes.scanCode = j;
       }
       // Fallback: use positional indexes if named not found

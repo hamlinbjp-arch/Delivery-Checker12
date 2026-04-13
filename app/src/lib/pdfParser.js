@@ -166,7 +166,7 @@ export async function parseSupplierMappingsPDF(file, onProgress) {
       // Split on 2+ spaces to get columns:
       // [0] supplierCode  [1] description  [n-3] stockCode  [n-2] "1"  [n-1] "Units"
       const cols = line.split(/\s{2,}/);
-      if (cols.length >= 3 && /^\d{3,6}$/.test(cols[cols.length - 3])) {
+      if (cols.length >= 3 && /^\d{1,7}$/.test(cols[cols.length - 3])) {
         const supplierCode = cols[0].trim();
         const stockCode = cols[cols.length - 3];
         const description = cols.slice(1, cols.length - 3).join(' ').trim();
