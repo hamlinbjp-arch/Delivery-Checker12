@@ -11,7 +11,7 @@ import { resizeImage } from '../lib/imageUtils';
 //   onMatch(posCode, posDescription) – called when user confirms a match
 //   onNone()      – called when user marks as "set aside"
 //   onClose()     – called to dismiss without action
-export default function AIPhotoIdentifier({ currentItem, apiKey, onMatch, onNone, onClose }) {
+export default function AIPhotoIdentifier({ currentItem, unmatchedItems, apiKey, onMatch, onNone, onClose }) {
   const fileRef = useRef();
   const camRef = useRef();
   const [analyzing, setAnalyzing] = useState(false);
@@ -37,7 +37,12 @@ Identify the product in the photo. Return ONLY a JSON object (no markdown):
       setSuggestion(parsed);
 
       const { posItems } = useStore.getState();
-      const matches = searchPosItems(parsed.productName, posItems || []);
+      // Narrow candidates to posItems suggested for unmatched delivery items when available
+      const candidateCodes = new Set((unmatchedItems || []).filter(i => i.posCode).map(i => i.posCode));
+      const candidateItems = candidateCodes.size > 0
+        ? (posItems || []).filter(p => candidateCodes.has(p.code))
+        : (posItems || []);
+      const matches = searchPosItems(parsed.productName, candidateItems.length > 0 ? candidateItems : (posItems || []));
       setPosResults(matches);
     } catch (err) {
       setError(err.message);

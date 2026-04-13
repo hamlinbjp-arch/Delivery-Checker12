@@ -28,7 +28,7 @@ const STATUS_LABELS = {
 const NEEDS_RESOLVE = ['short', 'damaged', 'set-aside', 'missing', 'unmatched', 'pending'];
 
 export default function ResolveStep() {
-  const { activeDelivery, updateDeliveryItem, updateDeliveryStep, finalizeDelivery, addLearning } = useStore();
+  const { activeDelivery, updateDeliveryItem, updateDeliveryStep, finalizeDelivery, addLearning, set } = useStore();
   const items = activeDelivery?.items || [];
   const [actionItem, setActionItem] = useState(null);
   const [finishing, setFinishing] = useState(false);
@@ -42,7 +42,13 @@ export default function ResolveStep() {
     if (patch.matchSource === 'manual' && patch.posCode) {
       const item = items.find(i => i.id === id);
       if (item?.invoiceName) {
-        addLearning({ invoiceName: item.invoiceName, posCode: patch.posCode });
+        addLearning({
+          invoiceName: item.invoiceName,
+          posCode: patch.posCode,
+          supplier: activeDelivery?.supplier,
+          posDescription: patch.posDescription,
+          confirmedAt: new Date().toISOString(),
+        });
       }
     }
     setActionItem(null);
@@ -51,6 +57,7 @@ export default function ResolveStep() {
   const handleFinish = async () => {
     setFinishing(true);
     await finalizeDelivery();
+    set({ page: 'history' });
   };
 
   return (

@@ -44,7 +44,7 @@ export default function App() {
       <Header />
       {storageError === 'quota' && (
         <div style={{ background: '#e5a10018', border: '1px solid var(--amber)', borderRadius: 8, margin: '8px 12px 0', padding: '8px 12px', fontSize: 12, color: 'var(--amber)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>Storage full — oldest history was trimmed to free space.</span>
+          <span>Storage full — some data may not have been saved. Please export your history and clear old deliveries.</span>
           <button onClick={clearStorageError} style={{ background: 'none', border: 'none', color: 'var(--amber)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 2px' }}>✕</button>
         </div>
       )}
