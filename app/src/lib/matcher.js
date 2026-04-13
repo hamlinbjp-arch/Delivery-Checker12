@@ -57,6 +57,32 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
     }
   }
 
+  // Level 1b: direct POS supplier code lookup
+  // Matches item.supplierCode against posItems[].supplierCode (SUPPLIERSTOCKCODE column
+  // from FILE-STOCK-4 export). No separate PDF required — works as long as the POS stock
+  // file has been uploaded with the SUPPLIERSTOCKCODE column populated.
+  if (item.supplierCode && posItems?.length) {
+    const normCode = stripZeros(item.supplierCode.toLowerCase().trim());
+    if (normCode && normCode !== '0') {
+      const found = posItems.find(p => {
+        const pCode = stripZeros((p.supplierCode || '').toLowerCase().trim());
+        return pCode && pCode !== '0' && pCode === normCode;
+      });
+      if (found) {
+        return {
+          ...result,
+          posCode: found.code,
+          posDescription: found.description,
+          posPrice: found.price ?? null,
+          matchLevel: 1,
+          matchSource: 'master',
+          matchConfidence: 100,
+          status: 'pending',
+        };
+      }
+    }
+  }
+
   // Level 2: learning layer — normalized invoice name → pos code (or entry object)
   const normName = normalize(item.invoiceName || '');
   if (normName && learningLayer?.[normName]) {

@@ -78,6 +78,40 @@ export default function DeliveryDashboard() {
   return (
     <div style={{ paddingTop: 8 }}>
 
+      {/* Cancel / abandon delivery */}
+      {items.length === 0 && processStep !== 'extracting' ? (
+        <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px', marginBottom: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 12 }}>
+            No invoice loaded. Start a new delivery?
+          </div>
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', padding: 12, fontSize: 14, fontWeight: 700 }}
+            onClick={handleCancel}>
+            ← New Delivery
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+          {!confirmCancel ? (
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 8px' }}
+              onClick={() => setConfirmCancel(true)}>
+              Abandon delivery
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: 'var(--red)' }}>Discard this delivery?</span>
+              <button className="btn" style={{ fontSize: 11, padding: '4px 10px', background: 'var(--red)', color: '#fff', border: 'none', borderRadius: 6 }}
+                onClick={handleCancel}>Yes, discard</button>
+              <button className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 8px' }}
+                onClick={() => setConfirmCancel(false)}>Cancel</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Non-blocking extraction progress */}
       {processStep === 'extracting' && (
         <div style={{ background: 'var(--amber)', color: '#000', padding: '8px 14px', borderRadius: 8, marginBottom: 10, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -112,36 +146,6 @@ export default function DeliveryDashboard() {
               Not yet
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Cancel / abandon delivery */}
-      {items.length === 0 && processStep !== 'extracting' ? (
-        <div style={{ marginBottom: 10 }}>
-          <button className="btn btn-ghost" style={{ width: '100%', fontSize: 13 }} onClick={handleCancel}>
-            ← New Delivery
-          </button>
-        </div>
-      ) : items.length > 0 && (
-        <div style={{ marginBottom: 10 }}>
-          {!confirmCancel ? (
-            <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--text3)' }}
-              onClick={() => setConfirmCancel(true)}>
-              Abandon delivery
-            </button>
-          ) : (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 12, color: 'var(--text2)' }}>Discard this delivery?</span>
-              <button className="btn" style={{ fontSize: 12, background: 'var(--red)', color: '#fff', border: 'none' }}
-                onClick={handleCancel}>
-                Yes, discard
-              </button>
-              <button className="btn btn-ghost" style={{ fontSize: 12 }}
-                onClick={() => setConfirmCancel(false)}>
-                Cancel
-              </button>
-            </div>
-          )}
         </div>
       )}
 
