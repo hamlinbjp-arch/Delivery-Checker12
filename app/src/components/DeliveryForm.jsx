@@ -5,6 +5,27 @@ import { extractInvoiceItemsWithRetry } from '../lib/claude';
 import { matchAllItems } from '../lib/matcher';
 import { detectSupplierFromPDF } from '../lib/pdfParser';
 
+// Combine duplicate invoice lines (same supplier code or same name) by summing quantities.
+// Suppliers sometimes list the same item on two lines instead of setting qty 2.
+function deduplicateItems(items) {
+  const seen = new Map();
+  const result = [];
+  for (const item of items) {
+    const key = item.supplierCode
+      ? `code:${item.supplierCode.trim().toLowerCase()}`
+      : `name:${(item.invoiceName || '').trim().toLowerCase()}`;
+    if (seen.has(key)) {
+      seen.get(key).qtyExpected += (item.qtyExpected || 1);
+      seen.get(key).qtyReceived = seen.get(key).qtyExpected;
+    } else {
+      const copy = { ...item };
+      seen.set(key, copy);
+      result.push(copy);
+    }
+  }
+  return result;
+}
+
 export default function DeliveryForm() {
   const {
     apiKey, activeDelivery, supplierMappings, supplierRecencyOrder, supplierUsageCounts,
@@ -66,8 +87,9 @@ export default function DeliveryForm() {
     extractInvoiceItemsWithRetry(apiKey, filesSnapshot, () => set({ processStep: 'extracting', extractionError: null, extractingRetry: true }))
       .then(extracted => {
         set({ processStep: 'matching', extractingRetry: false });
+        const deduped = deduplicateItems(extracted);
         const { supplierMappings: sm, posItems: pi, learningLayer: ll, matchCorrections: mc } = useStore.getState();
-        const matched = matchAllItems(extracted, {
+        const matched = matchAllItems(deduped, {
           supplierMappings: sm, posItems: pi, learningLayer: ll,
           matchCorrections: mc, supplierName: effectiveSupplier,
         });

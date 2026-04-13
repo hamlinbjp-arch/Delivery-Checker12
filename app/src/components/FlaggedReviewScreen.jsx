@@ -29,6 +29,17 @@ function ReviewItem({ item, posItems, supplier, addMatchCorrection, resolveItemW
   // Split state
   const [splits, setSplits] = useState([{ posCode: '', posDescription: '', qty: 1, query: '', results: [] }]);
 
+  const handleQuickConfirm = () => {
+    addMatchCorrection({
+      supplier,
+      invoiceName: item.invoiceName,
+      invoiceCode: item.supplierCode,
+      posCode: item.posCode,
+      posDescription: item.posDescription,
+    });
+    resolveItemWithPOS(item.id, { code: item.posCode, description: item.posDescription, price: item.posPrice });
+  };
+
   const handleLinkSearch = (q) => {
     setLinkQuery(q);
     setLinkResults(q.length >= 2 ? searchPosItems(q, posItems) : []);
@@ -90,19 +101,29 @@ function ReviewItem({ item, posItems, supplier, addMatchCorrection, resolveItemW
 
       {/* Action buttons */}
       {mode === null && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" style={{ fontSize: 12, padding: '6px 12px' }}
-            onClick={() => setMode('link')}>
-            <Icon name="search" size={14} /> Link POS Item
-          </button>
-          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }}
-            onClick={() => markItemAsNewItem(item.id)}>
-            New Item
-          </button>
-          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }}
-            onClick={() => setMode('split')}>
-            Split
-          </button>
+        <div>
+          {item.matchLevel === 3 && item.posCode && (
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', fontSize: 13, padding: '9px 12px', marginBottom: 8, textAlign: 'left' }}
+              onClick={handleQuickConfirm}>
+              ✓ Confirm: {item.posDescription}
+            </button>
+          )}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" style={{ fontSize: 12, padding: '6px 12px' }}
+              onClick={() => setMode('link')}>
+              <Icon name="search" size={14} /> Link POS Item
+            </button>
+            <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }}
+              onClick={() => markItemAsNewItem(item.id)}>
+              New Item
+            </button>
+            <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }}
+              onClick={() => setMode('split')}>
+              Split
+            </button>
+          </div>
         </div>
       )}
 

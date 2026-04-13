@@ -30,7 +30,7 @@ export function fuzzyScore(a, b) {
       const wb = tb[i];
       let s = 0;
       const lenDiff = Math.abs(wa.length - wb.length);
-      if (lenDiff > Math.max(wa.length, wb.length) * 0.6) continue;
+      if (wa.length > 3 && wb.length > 3 && lenDiff > Math.max(wa.length, wb.length) * 0.6) continue;
       if (wa === wb) s = 1;
       else if (wa.startsWith(wb) || wb.startsWith(wa)) s = 0.85;
       else if (wa.includes(wb) || wb.includes(wa)) s = 0.7;
