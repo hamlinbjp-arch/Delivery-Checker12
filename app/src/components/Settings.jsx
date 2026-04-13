@@ -10,6 +10,7 @@ const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month
 export default function Settings() {
   const {
     apiKey, locationName, supplierMappings, posItems, departments, learningLayer,
+    supplierRecencyOrder, supplierUsageCounts,
     saveApiKey, saveLocationName, saveSupplierMappings, savePosItems, saveDepartments,
     setLearningLayer, clearHistory,
   } = useStore();
@@ -31,6 +32,23 @@ export default function Settings() {
 
   const setError = (key, msg) => setErrors(e => ({ ...e, [key]: msg }));
   const clearError = (key) => setErrors(e => ({ ...e, [key]: '' }));
+
+  // -- Export Suppliers
+  const handleExportSuppliers = () => {
+    const suppliers = (supplierRecencyOrder || []).map(name => ({
+      name,
+      lastUsed: supplierUsageCounts?.[name]?.lastUsed || null,
+      useCount: supplierUsageCounts?.[name]?.useCount || 0,
+    }));
+    const data = { exportedAt: new Date().toISOString(), suppliers };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `suppliers-export-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // -- Location Name
   const handleSaveLocation = async () => {
@@ -248,6 +266,17 @@ export default function Settings() {
             )}
           </>
         )}
+      </div>
+
+      {/* Section 3b: Supplier Data */}
+      <div className="card">
+        <div className="card-label">Supplier Data</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>
+          <span style={{ color: 'var(--green)', fontWeight: 600 }}>{(supplierRecencyOrder || []).length}</span> known supplier{(supplierRecencyOrder || []).length !== 1 ? 's' : ''}
+        </div>
+        <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={handleExportSuppliers}>
+          <Icon name="download" size={14} /> Export Suppliers JSON
+        </button>
       </div>
 
       {/* Section 4: Danger Zone */}

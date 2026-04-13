@@ -3,6 +3,8 @@ import Header from './components/Header';
 import Nav from './components/Nav';
 import Setup from './components/Setup';
 import DeliveryForm from './components/DeliveryForm';
+import DeliveryDashboard from './components/DeliveryDashboard';
+import FlaggedReviewScreen from './components/FlaggedReviewScreen';
 import ReviewStep from './components/ReviewStep';
 import Checklist from './components/Checklist';
 import ResolveStep from './components/ResolveStep';
@@ -23,11 +25,13 @@ export default function App() {
     // History detail takes priority over page
     if (viewingHistoryId) return <HistoryDetail />;
 
+    if (page === 'review') return <FlaggedReviewScreen />;
     if (page === 'history') return <History />;
     if (page === 'settings') return <Settings />;
 
     // Delivery page — route by active delivery step
     const step = activeDelivery?.step;
+    if (step === 'dashboard') return <DeliveryDashboard />;
     if (step === 'review') return <ReviewStep />;
     if (step === 'checklist') return <Checklist />;
     if (step === 'resolve') return <ResolveStep />;

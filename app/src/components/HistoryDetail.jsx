@@ -139,6 +139,28 @@ export default function HistoryDetail() {
       <div>
         {items.map(item => <ItemRow key={item.id} item={item} />)}
       </div>
+
+      {record.newItems?.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>
+            New Items ({record.newItems.length})
+          </div>
+          {record.newItems.map((ni, idx) => (
+            <div key={idx} className="card" style={{ marginBottom: 6, borderLeft: '3px solid var(--amber)' }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{ni.invoiceName || '(unknown)'}</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                {ni.invoiceCode && (
+                  <span style={{ fontFamily: 'var(--font-mono)', marginRight: 8 }}>{ni.invoiceCode}</span>
+                )}
+                Qty {ni.invoiceQty}
+                {ni.invoicePrice != null && (
+                  <span style={{ marginLeft: 8 }}>${Number(ni.invoicePrice).toFixed(2)}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

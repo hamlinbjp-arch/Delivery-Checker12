@@ -7,10 +7,9 @@ import { detectSupplierFromPDF } from '../lib/pdfParser';
 
 export default function DeliveryForm() {
   const {
-    apiKey, supplierMappings, posItems, learningLayer,
-    processStep, activeDelivery,
+    apiKey, activeDelivery,
     startDelivery, updateDeliveryStep, setDeliveryItems, setDeliveryNotes,
-    cancelDelivery, set,
+    set,
   } = useStore();
 
   // Local form state
@@ -46,35 +45,31 @@ export default function DeliveryForm() {
     if (!invoiceFiles.length || !apiKey) return;
     setError('');
 
-    // Initialize active delivery in store
     const effectiveSupplier = supplier === '__other__' ? customSupplier.trim() : supplier;
+
+    // Initialize delivery record
     await startDelivery(effectiveSupplier);
     if (notes) await setDeliveryNotes(notes);
 
-    try {
-      set({ processStep: 'extracting' });
-      const extracted = await extractInvoiceItems(apiKey, invoiceFiles);
+    // Navigate to dashboard immediately — don't wait for extraction
+    await updateDeliveryStep('dashboard');
+    set({ processStep: 'extracting', extractionError: null });
 
-      set({ processStep: 'matching' });
-      const matched = matchAllItems(extracted, { supplierMappings, posItems, learningLayer, supplierName: effectiveSupplier });
-
-      await setDeliveryItems(matched);
-      await updateDeliveryStep('review');
-      set({ processStep: 'idle' });
-    } catch (err) {
-      set({ processStep: 'error' });
-      setError(err.message);
-      await cancelDelivery();
-    }
+    // Background extraction — fire and forget
+    const filesSnapshot = [...invoiceFiles];
+    extractInvoiceItems(apiKey, filesSnapshot)
+      .then(extracted => {
+        set({ processStep: 'matching' });
+        const { supplierMappings: sm, posItems: pi, learningLayer: ll, matchCorrections: mc } = useStore.getState();
+        const matched = matchAllItems(extracted, {
+          supplierMappings: sm, posItems: pi, learningLayer: ll,
+          matchCorrections: mc, supplierName: effectiveSupplier,
+        });
+        return setDeliveryItems(matched);
+      })
+      .then(() => set({ processStep: 'idle' }))
+      .catch(err => set({ processStep: 'idle', extractionError: err.message }));
   };
-
-  const isProcessing = processStep === 'extracting' || processStep === 'matching';
-
-  const processLabel = processStep === 'extracting'
-    ? 'AI analyzing invoice...'
-    : processStep === 'matching'
-    ? 'Matching POS stocklist...'
-    : 'Check Delivery';
 
   return (
     <div style={{ paddingTop: 16 }}>
@@ -146,11 +141,11 @@ export default function DeliveryForm() {
 
       {/* Process button */}
       <button
-        className={`btn${!isProcessing && invoiceFiles.length && apiKey ? ' btn-primary' : ''}`}
+        className={`btn${invoiceFiles.length && apiKey ? ' btn-primary' : ''}`}
         style={{ width: '100%', padding: 16, fontSize: 16, fontWeight: 700, border: `2px solid ${invoiceFiles.length ? 'var(--green-dark)' : 'var(--border)'}` }}
-        disabled={isProcessing || !invoiceFiles.length || !apiKey}
+        disabled={!invoiceFiles.length || !apiKey}
         onClick={handleProcess}>
-        {isProcessing ? <><span className="spinner">⟳</span> {processLabel}</> : <><Icon name="zap" size={20} /> Check Delivery</>}
+        <Icon name="zap" size={20} /> Check Delivery
       </button>
       {!apiKey && <p style={{ fontSize: 12, color: 'var(--amber)', marginTop: 8, textAlign: 'center' }}>Set your API key in Settings first</p>}
     </div>
