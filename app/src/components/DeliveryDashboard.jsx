@@ -13,8 +13,10 @@ export const isGrey   = i => !isGreen(i) && !isYellow(i);
 export default function DeliveryDashboard() {
   const {
     activeDelivery, processStep, extractionError, extractingRetry,
-    updateDeliveryItem, completeDelivery, set,
+    updateDeliveryItem, completeDelivery, cancelDelivery, set,
   } = useStore();
+
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   const [search, setSearch] = useState('');
   const [completing, setCompleting] = useState(false);
@@ -69,8 +71,47 @@ export default function DeliveryDashboard() {
 
   const confirmedCount = items.filter(i => isGrey(i)).length;
 
+  const handleCancel = async () => {
+    await cancelDelivery();
+    set({ page: 'delivery' });
+  };
+
   return (
     <div style={{ paddingTop: 8 }}>
+
+      {/* Cancel / abandon delivery */}
+      {items.length === 0 && processStep !== 'extracting' ? (
+        <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px', marginBottom: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 12 }}>
+            No invoice loaded. Start a new delivery?
+          </div>
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', padding: 12, fontSize: 14, fontWeight: 700 }}
+            onClick={handleCancel}>
+            ← New Delivery
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+          {!confirmCancel ? (
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 8px' }}
+              onClick={() => setConfirmCancel(true)}>
+              Abandon delivery
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: 'var(--red)' }}>Discard this delivery?</span>
+              <button className="btn" style={{ fontSize: 11, padding: '4px 10px', background: 'var(--red)', color: '#fff', border: 'none', borderRadius: 6 }}
+                onClick={handleCancel}>Yes, discard</button>
+              <button className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 8px' }}
+                onClick={() => setConfirmCancel(false)}>Cancel</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Non-blocking extraction progress */}
       {processStep === 'extracting' && (
@@ -190,4 +231,4 @@ export default function DeliveryDashboard() {
 
     </div>
   );
-}
+                      }
