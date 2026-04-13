@@ -124,14 +124,14 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
     }
   }
 
-  // Level 3: fuzzy match against posItems descriptions (threshold ≥ 70)
+  // Level 3: fuzzy match against posItems descriptions (threshold ≥ 60)
   if (item.invoiceName && posItems?.length) {
     let best = { code: '', description: '', price: null, confidence: 0 };
     for (const p of posItems) {
       const s = fuzzyScore(item.invoiceName, p.description);
       if (s > best.confidence) best = { code: p.code, description: p.description, price: p.price ?? null, confidence: s };
     }
-    if (best.confidence >= 70) {
+    if (best.confidence >= 60) {
       return {
         ...result,
         posCode: best.code,
