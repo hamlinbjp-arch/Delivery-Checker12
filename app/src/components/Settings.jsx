@@ -191,6 +191,11 @@ export default function Settings() {
           ) : (
             <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Not loaded</div>
           )}
+          {posItems?.length > 0 && !posItems.some(p => p.supplierCode) && (
+            <div style={{ fontSize: 12, color: 'var(--amber)', background: '#e5a10018', border: '1px solid var(--amber)', borderRadius: 6, padding: '8px 10px', marginBottom: 6 }}>
+              ⚠ Supplier codes missing — re-upload this file to enable supplier code matching.
+            </div>
+          )}
           <div style={{ marginBottom: 6 }}>
             <select className="input" style={{ fontSize: 12, padding: '6px 8px', appearance: 'auto' }}
               value={stockMode} onChange={e => setStockMode(e.target.value)}>
