@@ -47,6 +47,72 @@ export async function detectSupplierFromPDF(file, supplierNames) {
   }
 }
 
+// Attempt to extract invoice line items from a delivery PDF using local text extraction.
+// Handles "NNNNN - Description   Qty" row format common on wholesale invoices.
+// Returns [{ supplierCode, invoiceName, qtyExpected, pageNumber }] or null if format not recognised.
+export async function extractInvoiceItemsLocally(file) {
+  if (!file || (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf'))) {
+    return null;
+  }
+  try {
+    const lib = await getPdfJs();
+    const ab = await file.arrayBuffer();
+    const pdf = await lib.getDocument({ data: ab }).promise;
+    const items = [];
+    const seen = new Set();
+
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const tc = await page.getTextContent();
+      await new Promise(r => setTimeout(r, 0)); // yield to keep UI responsive
+
+      // Group text spans by y-coordinate row (±2px tolerance)
+      const bands = {};
+      for (const span of tc.items) {
+        if (!span.str.trim()) continue;
+        const y = Math.round(span.transform[5] / 2) * 2;
+        const x = Math.round(span.transform[4]);
+        if (!bands[y]) bands[y] = [];
+        bands[y].push({ x, text: span.str });
+      }
+
+      for (const y of Object.keys(bands).map(Number).sort((a, b) => b - a)) {
+        const parts = bands[y].sort((a, b) => a.x - b.x);
+        // Build line with column-gap-aware spacing (3 spaces where x-gap > 15px)
+        let line = parts[0].text;
+        for (let i = 1; i < parts.length; i++) {
+          const gap = parts[i].x - (parts[i - 1].x + parts[i - 1].text.trimEnd().length * 6);
+          line += (gap > 15 ? '   ' : ' ') + parts[i].text;
+        }
+        line = line.trim();
+
+        // Match "NNNNN - Description" — supplier code (3-8 digits) then dash then letter-led name
+        const m = line.match(/^(\d{3,8})\s*[-–—]\s*([A-Za-z].{2,79}?)(?:\s{2,}|$)/);
+        if (!m) continue;
+        const supplierCode = m[1];
+        if (seen.has(supplierCode)) continue;
+        seen.add(supplierCode);
+
+        // Strip trailing price/unit from description
+        const name = m[2].trim().replace(/\s+[\$£]?[\d.,]+\s*$/, '').trim();
+        if (name.length < 2) continue;
+
+        // Qty: first standalone integer in the remainder of the line
+        const rest = line.slice(m.index + m[0].length).trim();
+        const qtyM = rest.match(/\b(\d{1,4})\b/);
+        const qtyExpected = qtyM ? Math.max(1, Math.min(parseInt(qtyM[1], 10), 999)) : 1;
+
+        items.push({ supplierCode, invoiceName: name, qtyExpected, pageNumber: pageNum });
+      }
+    }
+
+    // Require at least 3 items — fewer suggests the format didn't match
+    return items.length >= 3 ? items : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function parsePOSPdf(file, onProgress) {
   const lib = await getPdfJs();
   let arrayBuffer;

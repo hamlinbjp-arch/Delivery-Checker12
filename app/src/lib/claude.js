@@ -1,10 +1,32 @@
 import { resizeImage, fileToBase64 } from './imageUtils';
+import { extractInvoiceItemsLocally } from './pdfParser';
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
 // Extract invoice line items from one or more files (PDFs and/or images).
 // Returns [{ id, invoiceName, supplierCode, qtyExpected, pageNumber }]
 export async function extractInvoiceItems(apiKey, files) {
+  // Fast path: try local PDF text extraction first (instant, no API call, no cost).
+  // Works for standard "CODE - Description   Qty" wholesale invoice format.
+  // Falls through to Claude if the PDF is image-based or format doesn't match.
+  if (files.length === 1) {
+    const local = await extractInvoiceItemsLocally(files[0]);
+    if (local?.length >= 3) {
+      return local.map(item => ({
+        id: uid(),
+        invoiceName: item.invoiceName,
+        supplierCode: item.supplierCode,
+        qtyExpected: item.qtyExpected,
+        pageNumber: item.pageNumber,
+        qtyReceived: item.qtyExpected,
+        status: 'pending',
+        damageNote: '',
+        swappedForCode: null,
+        isBonus: false,
+      }));
+    }
+  }
+
   const content = [];
   for (const f of files) {
     const isPdf = f.type.includes('pdf') || f.name.toLowerCase().endsWith('.pdf');
