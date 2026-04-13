@@ -54,6 +54,19 @@ Include EVERY line item. Preserve original order.`,
   }));
 }
 
+export async function extractInvoiceItemsWithRetry(apiKey, files, onRetry) {
+  try {
+    return await extractInvoiceItems(apiKey, files);
+  } catch (err) {
+    if (err.message && err.message.toLowerCase().includes('overloaded')) {
+      onRetry?.();
+      await new Promise(r => setTimeout(r, 3000));
+      return await extractInvoiceItems(apiKey, files);
+    }
+    throw err;
+  }
+}
+
 export async function callClaude(apiKey, messages, systemPrompt, maxTokens = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90000);
