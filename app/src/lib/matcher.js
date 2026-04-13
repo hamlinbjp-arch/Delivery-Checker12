@@ -2,10 +2,18 @@ import { normalize, fuzzyScore } from './fuzzy';
 
 const stripZeros = c => (c || '').replace(/^0+/, '') || '0';
 
+// Key for match corrections dictionary
+const correctionKey = (supplier, invoiceCode, invoiceName) => {
+  const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+  return invoiceCode
+    ? `${norm(supplier)}|code:${norm(invoiceCode)}`
+    : `${norm(supplier)}|name:${norm(invoiceName)}`;
+};
+
 // Match a single invoice item against the data store.
-// context: { supplierMappings, posItems, learningLayer, supplierName }
+// context: { supplierMappings, posItems, learningLayer, matchCorrections, supplierName }
 // Returns the item enhanced with match fields.
-export function matchInvoiceItem(item, { supplierMappings, posItems, learningLayer, supplierName }) {
+export function matchInvoiceItem(item, { supplierMappings, posItems, learningLayer, matchCorrections, supplierName }) {
   const result = {
     posCode: null,
     posDescription: null,
@@ -68,6 +76,26 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
     }
   }
 
+  // Level 2.5: match corrections — supplier-scoped explicit mappings from Review screen
+  // Checked before fuzzy; treated as high confidence (green)
+  if (matchCorrections && (item.supplierCode || item.invoiceName)) {
+    const key = correctionKey(supplierName, item.supplierCode, item.invoiceName);
+    const correction = matchCorrections[key];
+    if (correction) {
+      const posItem = posItems?.find(p => p.code === correction.posCode) || null;
+      return {
+        ...result,
+        posCode: correction.posCode,
+        posDescription: posItem?.description || correction.posDescription,
+        posPrice: posItem?.price ?? null,
+        matchLevel: 2,
+        matchSource: 'learned',
+        matchConfidence: 99,
+        status: 'pending',
+      };
+    }
+  }
+
   // Level 3: fuzzy match against posItems descriptions (threshold ≥ 70)
   if (item.invoiceName && posItems?.length) {
     let best = { code: '', description: '', price: null, confidence: 0 };
@@ -93,7 +121,7 @@ export function matchInvoiceItem(item, { supplierMappings, posItems, learningLay
 }
 
 // Match all invoice items. Returns array with match fields added.
-// context: { supplierMappings, posItems, learningLayer, supplierName }
+// context: { supplierMappings, posItems, learningLayer, matchCorrections, supplierName }
 export function matchAllItems(items, context) {
   return items.map(item => ({
     ...item,

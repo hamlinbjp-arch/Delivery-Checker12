@@ -11,9 +11,21 @@ function exportGeneric2(delivery, invoiceNumber, posItemsData, departmentsData) 
   const header2 = 'Qty,Code,Description,Cost,Barcode,Category';
 
   const receivedStatuses = ['confirmed', 'short', 'damaged', 'swapped', 'bonus'];
-  const rows = (delivery.items || [])
-    .filter(i => receivedStatuses.includes(i.status))
-    .map(item => {
+  const esc = v => String(v).includes(',') ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const rows = [];
+  for (const item of (delivery.items || [])) {
+    if (!receivedStatuses.includes(item.status)) continue;
+    if (item.splits?.length) {
+      // One row per split
+      for (const split of item.splits) {
+        const posItem = (posItemsData || []).find(p => p.code === split.posCode);
+        const dept = (departmentsData || []).find(d => d.id === posItem?.department);
+        const cost = posItem?.price != null ? posItem.price.toFixed(2) : '';
+        const barcode = posItem?.scanCode || '';
+        const category = dept?.name || '';
+        rows.push([split.qty, split.posCode || '', esc(split.posDescription || ''), cost, barcode, esc(category)].join(','));
+      }
+    } else {
       const code = item.status === 'swapped' ? (item.swappedForCode || item.posCode) : item.posCode;
       const posItem = (posItemsData || []).find(p => p.code === code);
       const dept = (departmentsData || []).find(d => d.id === posItem?.department);
@@ -21,9 +33,9 @@ function exportGeneric2(delivery, invoiceNumber, posItemsData, departmentsData) 
       const cost = item.posPrice != null ? item.posPrice.toFixed(2) : '';
       const barcode = posItem?.scanCode || '';
       const category = dept?.name || '';
-      const esc = v => String(v).includes(',') ? `"${String(v).replace(/"/g, '""')}"` : String(v);
-      return [qty, code || '', esc(item.posDescription || ''), cost, barcode, esc(category)].join(',');
-    });
+      rows.push([qty, code || '', esc(item.posDescription || ''), cost, barcode, esc(category)].join(','));
+    }
+  }
 
   const csv = [header1, header2, ...rows].join('\n');
   const supplierName = (delivery.supplier || 'SUPPLIER').toUpperCase();
