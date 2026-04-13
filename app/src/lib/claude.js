@@ -58,7 +58,8 @@ export async function extractInvoiceItemsWithRetry(apiKey, files, onRetry) {
   try {
     return await extractInvoiceItems(apiKey, files);
   } catch (err) {
-    if (err.message && err.message.toLowerCase().includes('overloaded')) {
+    const msg = (err.message || '').toLowerCase();
+    if (msg.includes('overloaded') || msg.includes('529')) {
       onRetry?.();
       await new Promise(r => setTimeout(r, 3000));
       return await extractInvoiceItems(apiKey, files);
@@ -79,7 +80,7 @@ export async function callClaude(apiKey, messages, systemPrompt, maxTokens = 800
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: maxTokens, system: systemPrompt, messages }),
+      body: JSON.stringify({ model: 'claude-sonnet-4-5-20250929', max_tokens: maxTokens, system: systemPrompt, messages }),
       signal: controller.signal,
     });
     if (!resp.ok) {
