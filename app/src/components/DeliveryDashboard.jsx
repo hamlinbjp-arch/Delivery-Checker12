@@ -4,13 +4,13 @@ import { useStore, reviewCountSelector } from '../state/store';
 function haptic(p) { try { navigator.vibrate(p); } catch {} }
 
 // Colour logic — three states only
-// L3 fuzzy with ≥90% confidence is treated as green (auto-confirmable, no manual review needed)
+// L3 fuzzy with ≥65% confidence is treated as green (auto-confirmable, no manual review needed)
 export const isGreen  = i => i.status === 'pending' && i.matchLevel != null &&
-  (i.matchLevel <= 2 || (i.matchLevel === 3 && (i.matchConfidence ?? 0) >= 90));
+  (i.matchLevel <= 2 || (i.matchLevel === 3 && (i.matchConfidence ?? 0) >= 65));
 export const isYellow = i => i.status === 'flagged'  ||
                              i.status === 'unmatched' ||
                              (i.status === 'pending' && (i.matchLevel == null ||
-                               (i.matchLevel === 3 && (i.matchConfidence ?? 0) < 90)));
+                               (i.matchLevel === 3 && (i.matchConfidence ?? 0) < 65)));
 export const isGrey   = i => !isGreen(i) && !isYellow(i);
 
 export default function DeliveryDashboard() {
