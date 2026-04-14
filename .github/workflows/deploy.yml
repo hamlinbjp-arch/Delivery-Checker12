@@ -39,11 +39,23 @@ jobs:
         working-directory: app
         run: npm run build
 
+      - name: Prepare deployment with root redirect
+        run: |
+          mkdir -p _site/Delivery-Checker12
+          cp -r app/dist/. _site/Delivery-Checker12/
+          cat > _site/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html><head><meta charset="utf-8">
+          <meta http-equiv="refresh" content="0;url=/Delivery-Checker12/">
+          <script>window.location.replace('/Delivery-Checker12/');</script>
+          </head><body></body></html>
+          EOF
+
       - uses: actions/configure-pages@v4
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: app/dist
+          path: _site
 
       - id: deployment
         uses: actions/deploy-pages@v4
