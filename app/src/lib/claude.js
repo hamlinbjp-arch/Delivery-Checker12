@@ -3,77 +3,175 @@ import { extractInvoiceItemsLocally } from './pdfParser';
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-// Extract invoice line items from one or more files (PDFs and/or images).
-// Returns [{ id, invoiceName, supplierCode, qtyExpected, pageNumber }]
+// ── Robust extraction prompt ──────────────────────────────────────────
+// Handles all invoice formats: Wholesale Solutions (CODE - Desc), VTNZ,
+// TWS Wholesale, Shishaland, NZ Craft Brewing, Bevie Handcraft,
+// Hempstore, Chartbella, ALT NZ, and unknown formats.
+const EXTRACTION_SYSTEM = `You are a structured data extraction engine for stock management.
+Extract ALL product line items from the uploaded invoice. Return ONLY valid JSON, no explanations.`;
+
+const EXTRACTION_PROMPT = `You are extracting structured data from a supplier invoice for a stock management system.
+
+Your goal is to identify ALL product line items from the uploaded invoice and return clean, structured JSON.
+
+CONTEXT:
+Invoices come from multiple suppliers and formats:
+- Some include product codes (numeric like "225127" or alphanumeric like "SOLO-PKIT-M2810" or "SP476")
+- Some only include descriptions
+- Layouts vary (columns, spacing, multi-line rows)
+- Images may be rotated, skewed, or imperfect
+- Items often appear as "CODE - Product Name" (e.g. "225127 - Booty Cleanser") — separate the code from the name
+
+WHAT TO EXTRACT (per line item):
+- supplierCode: the supplier's product/item code if present, else empty string. Codes are usually uppercase, alphanumeric, may include dashes.
+- description: full clean product name with proper spacing between words
+- quantity: the ordered/delivered quantity as a number
+- unitPrice: unit price if visible, else null
+- total: line total if visible, else null
+
+RULES:
+1. A valid line item MUST have a description AND a quantity
+2. IGNORE: subtotals, GST/VAT lines, shipping/freight, invoice metadata (numbers, dates, addresses)
+3. Merge multi-line descriptions into one item
+4. Handle OCR artifacts: "O" as "0", "l"/"I" as "1" when in numeric context
+5. Quantities must be numeric — convert "2.00" to 2
+6. If the same product code appears multiple times (e.g. same item listed 3 times with qty 1 each), include EACH line separately — do not merge them
+
+OUTPUT FORMAT — return ONLY this JSON, nothing else:
+{"items":[{"supplierCode":"STRING OR EMPTY","description":"STRING","quantity":NUMBER,"unitPrice":NUMBER_OR_NULL,"total":NUMBER_OR_NULL}]}
+
+IMPORTANT: Be conservative — only extract real product rows. If unsure, include item but set unknown fields to null. Do NOT guess.`;
+
+// ── Parse Claude response into normalized items ──────────────────────
+function parseClaudeResponse(text) {
+  const stripped = text.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
+
+  // Try { "items": [...] } format first
+  const braceStart = stripped.indexOf('{');
+  const braceEnd = stripped.lastIndexOf('}');
+  if (braceStart >= 0 && braceEnd > braceStart) {
+    try {
+      const obj = JSON.parse(stripped.slice(braceStart, braceEnd + 1));
+      if (Array.isArray(obj.items)) return obj.items;
+    } catch { /* fall through */ }
+  }
+
+  // Fallback: try bare [...] array
+  const arrStart = stripped.indexOf('[');
+  const arrEnd = stripped.lastIndexOf(']');
+  if (arrStart >= 0 && arrEnd > arrStart) {
+    try { return JSON.parse(stripped.slice(arrStart, arrEnd + 1)); } catch { /* fall through */ }
+  }
+
+  throw new Error('Could not parse invoice data from AI response');
+}
+
+// ── Normalize extracted items to internal format ─────────────────────
+function normalizeItems(rawItems) {
+  return rawItems
+    .filter(item => {
+      const desc = (item.description || item.invoiceName || item.name || '').trim();
+      const qty = Number(item.quantity ?? item.qtyExpected ?? 0);
+      return desc.length >= 2 && qty > 0;
+    })
+    .map(item => ({
+      id: uid(),
+      invoiceName: (item.description || item.invoiceName || item.name || '').trim(),
+      supplierCode: (item.supplierCode || '').trim(),
+      qtyExpected: Number(item.quantity ?? item.qtyExpected) || 1,
+      unitPrice: item.unitPrice != null ? Number(item.unitPrice) : null,
+      lineTotal: item.total != null ? Number(item.total) : null,
+      pageNumber: item.pageNumber || 1,
+      qtyReceived: Number(item.quantity ?? item.qtyExpected) || 1,
+      status: 'pending',
+      damageNote: '',
+      swappedForCode: null,
+      isBonus: false,
+    }));
+}
+
+// ── Main extraction ──────────────────────────────────────────────────
+// PDFs: always use local text extraction (free, instant, no API cost)
+// Photos/images: use Claude API (needs OCR capability)
 export async function extractInvoiceItems(apiKey, files) {
-  // Fast path: try local PDF text extraction first (instant, no API call, no cost).
-  // Works for standard "CODE - Description   Qty" wholesale invoice format.
-  // Falls through to Claude if the PDF is image-based or format doesn't match.
-  if (files.length === 1) {
-    const local = await extractInvoiceItemsLocally(files[0]);
-    if (local?.length >= 3) {
-      return local.map(item => ({
+  // Separate PDFs from images
+  const pdfs = [];
+  const images = [];
+  for (const f of files) {
+    if (f.type.includes('pdf') || f.name.toLowerCase().endsWith('.pdf')) {
+      pdfs.push(f);
+    } else {
+      images.push(f);
+    }
+  }
+
+  let items = [];
+
+  // ── PDFs: local extraction (no API cost) ──
+  for (const pdf of pdfs) {
+    const local = await extractInvoiceItemsLocally(pdf);
+    if (local?.length) {
+      items.push(...local.map(item => ({
         id: uid(),
-        invoiceName: item.invoiceName,
-        supplierCode: item.supplierCode,
+        invoiceName: splitCamelCase(item.invoiceName),
+        supplierCode: item.supplierCode || '',
         qtyExpected: item.qtyExpected,
+        unitPrice: item.unitPrice ?? null,
+        lineTotal: item.lineTotal ?? null,
         pageNumber: item.pageNumber,
         qtyReceived: item.qtyExpected,
         status: 'pending',
         damageNote: '',
         swappedForCode: null,
         isBonus: false,
-      }));
+      })));
     }
   }
 
-  const content = [];
-  for (const f of files) {
-    const isPdf = f.type.includes('pdf') || f.name.toLowerCase().endsWith('.pdf');
-    if (isPdf) {
-      const b64 = await fileToBase64(f);
-      content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } });
-    } else {
+  // ── Images: use Claude API for OCR ──
+  if (images.length > 0 && apiKey) {
+    const content = [];
+    for (const f of images) {
       const b64 = await resizeImage(f);
       content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } });
     }
+    // Also include any PDFs that failed local extraction
+    for (const f of pdfs) {
+      if (!items.some(i => i.pageNumber)) {
+        const b64 = await fileToBase64(f);
+        content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } });
+      }
+    }
+    content.push({ type: 'text', text: EXTRACTION_PROMPT });
+
+    const data = await callClaude(apiKey, [{ role: 'user', content }], EXTRACTION_SYSTEM);
+    const text = data.content.map(c => c.text || '').join('');
+    const rawItems = parseClaudeResponse(text);
+    items.push(...normalizeItems(rawItems));
   }
 
-  content.push({
-    type: 'text',
-    text: `Extract ALL line items from this delivery invoice/docket.
-Items often appear as "CODE - Product Name" (e.g. "225127 - Booty Cleanser") — separate the supplier code from the product name.
-Return ONLY a JSON array (no markdown, no explanation):
-[{"invoiceName":"clean product name only","supplierCode":"supplier item code or empty string","qtyExpected":quantity as number,"pageNumber":page number or 1}]
-Include EVERY line item. Preserve original order.`,
-  });
-
-  const data = await callClaude(apiKey, [{ role: 'user', content }],
-    'You are a delivery reconciliation assistant. Extract all line items from the invoice. Return only valid JSON.');
-
-  const text = data.content.map(c => c.text || '').join('');
-  const stripped = text.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
-  const s = stripped.indexOf('[');
-  const e = stripped.lastIndexOf(']');
-  let items;
-  try {
-    items = s >= 0 && e > s ? JSON.parse(stripped.slice(s, e + 1)) : JSON.parse(stripped);
-  } catch {
-    throw new Error('Could not parse invoice data from AI response');
+  // If no PDFs extracted and no API key for images, try local on everything as last resort
+  if (items.length === 0 && images.length > 0 && !apiKey) {
+    throw new Error('Photo invoices require an API key for OCR. Upload a PDF instead, or add your API key in Settings.');
   }
 
-  return items.map(item => ({
-    id: uid(),
-    invoiceName: (item.invoiceName || item.name || '').trim(),
-    supplierCode: (item.supplierCode || '').trim(),
-    qtyExpected: Number(item.qtyExpected) || 1,
-    pageNumber: item.pageNumber || 1,
-    qtyReceived: Number(item.qtyExpected) || 1,
-    status: 'pending',
-    damageNote: '',
-    swappedForCode: null,
-    isBonus: false,
-  }));
+  if (items.length === 0) {
+    throw new Error('No line items found. The PDF may be scanned/image-based — try uploading a photo and adding an API key.');
+  }
+
+  return items;
+}
+
+// Split CamelCase / concatenated words (for local extraction fallback):
+// "BootyCleanser" → "Booty Cleanser", "WetStuffGold100Ml" → "Wet Stuff Gold 100 Ml"
+function splitCamelCase(s) {
+  if (!s) return s;
+  return s
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/(\d)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export async function extractInvoiceItemsWithRetry(apiKey, files, onRetry) {

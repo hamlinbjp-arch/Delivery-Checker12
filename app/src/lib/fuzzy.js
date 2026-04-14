@@ -1,5 +1,18 @@
+// Split CamelCase/concatenated words: "BootyCleanser" → "Booty Cleanser"
+// Handles: "WetStuffGold100Ml" → "Wet Stuff Gold 100 Ml"
+function splitCamelCase(s) {
+  if (!s) return s;
+  return s
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/(\d)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function normalize(s) {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+  const split = splitCamelCase(s || '');
+  return split.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 export function tokenize(s) {
