@@ -92,14 +92,16 @@ function normalizeItems(rawItems) {
 
 // ── Main extraction ──────────────────────────────────────────────────
 // PDFs: always use local text extraction (free, instant, no API cost)
+// TXT files + pasted text: sent to Claude as raw text
 // Photos/images: use Claude API (needs OCR capability)
-export async function extractInvoiceItems(apiKey, files) {
-  // Separate PDFs from images
-  const pdfs = [];
-  const images = [];
+export async function extractInvoiceItems(apiKey, files, pasteText = '') {
+  const pdfs = [], images = [], txts = [];
   for (const f of files) {
-    if (f.type.includes('pdf') || f.name.toLowerCase().endsWith('.pdf')) {
+    const name = f.name.toLowerCase();
+    if (f.type.includes('pdf') || name.endsWith('.pdf')) {
       pdfs.push(f);
+    } else if (name.endsWith('.txt') || f.type === 'text/plain') {
+      txts.push(f);
     } else {
       images.push(f);
     }
@@ -128,6 +130,25 @@ export async function extractInvoiceItems(apiKey, files) {
     }
   }
 
+  // ── TXT files + pasted text: send raw text to Claude ──
+  const textChunks = [];
+  for (const f of txts) {
+    const text = await f.text();
+    textChunks.push(`--- FILE: ${f.name} ---\n${text}`);
+  }
+  if (pasteText.trim()) {
+    textChunks.push(pasteText.trim());
+  }
+  if (textChunks.length > 0) {
+    if (!apiKey) throw new Error('Text invoices require an API key. Add your key in Settings.');
+    const combined = textChunks.join('\n\n');
+    const content = [{ type: 'text', text: combined + '\n\n' + EXTRACTION_PROMPT }];
+    const data = await callClaude(apiKey, [{ role: 'user', content }], EXTRACTION_SYSTEM);
+    const responseText = data.content.map(c => c.text || '').join('');
+    const rawItems = parseClaudeResponse(responseText);
+    items.push(...normalizeItems(rawItems));
+  }
+
   // ── Images: use Claude API for OCR ──
   if (images.length > 0 && apiKey) {
     const content = [];
@@ -150,7 +171,6 @@ export async function extractInvoiceItems(apiKey, files) {
     items.push(...normalizeItems(rawItems));
   }
 
-  // If no PDFs extracted and no API key for images, try local on everything as last resort
   if (items.length === 0 && images.length > 0 && !apiKey) {
     throw new Error('Photo invoices require an API key for OCR. Upload a PDF instead, or add your API key in Settings.');
   }
@@ -174,15 +194,15 @@ function splitCamelCase(s) {
     .trim();
 }
 
-export async function extractInvoiceItemsWithRetry(apiKey, files, onRetry) {
+export async function extractInvoiceItemsWithRetry(apiKey, files, onRetry, pasteText = '') {
   try {
-    return await extractInvoiceItems(apiKey, files);
+    return await extractInvoiceItems(apiKey, files, pasteText);
   } catch (err) {
     const msg = (err.message || '').toLowerCase();
     if (msg.includes('overloaded') || msg.includes('529')) {
       onRetry?.();
       await new Promise(r => setTimeout(r, 3000));
-      return await extractInvoiceItems(apiKey, files);
+      return await extractInvoiceItems(apiKey, files, pasteText);
     }
     throw err;
   }
