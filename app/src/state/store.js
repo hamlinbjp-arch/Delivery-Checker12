@@ -190,6 +190,10 @@ export const useStore = create((set, get) => ({
   },
 
   // ── Match Corrections (supplier-scoped learned mappings) ─────────
+  async setMatchCorrections(corrections) {
+    await ls.set('match-corrections', corrections);
+    set({ matchCorrections: corrections });
+  },
   async addMatchCorrection({ supplier, invoiceName, invoiceCode, posCode, posDescription }) {
     if (!posCode) return;
     const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
