@@ -230,6 +230,16 @@ export async function extractInvoiceItemsLocally(file) {
 
       const numericMinX = gapBoundary;
 
+      // ── Step 5b: Find qty column x-position from header ──
+      // This lets us reliably pick the right numeric column even when
+      // unit price appears left of qty in some invoice formats.
+      let qtyHeaderX = null;
+      if (headerIdx >= 0) {
+        const hParts = rows[headerIdx].parts;
+        const qtyHeader = hParts.find(p => /^(qty|quantity|qté|units?|ordered|no\.?)$/i.test(p.text));
+        if (qtyHeader) qtyHeaderX = qtyHeader.x;
+      }
+
       // ── Step 6: Parse data rows ──
       for (let i = startIdx; i < rows.length; i++) {
         const row = rows[i];
@@ -291,31 +301,33 @@ export async function extractInvoiceItemsLocally(file) {
 
         if (description.length < 2) continue;
 
-        // Assign numeric values to columns based on x-position
-        // Sort numerics left to right
+        // Assign numeric values to qty / unitPrice / lineTotal
         numSpans.sort((a, b) => a.x - b.x);
         const numValues = numSpans.map(s => parseNum(s.text));
 
-        // The first numeric is usually quantity (smallest value, integer-ish)
-        // Heuristic: qty is the leftmost numeric that looks like a count (≤ 999, often integer)
         let qty = 1;
         let unitPrice = null;
         let lineTotal = null;
 
-        if (numValues.length >= 1) {
-          const q = numValues[0];
-          if (q != null && q > 0 && q <= 9999) {
-            qty = q % 1 === 0 ? q : Math.round(q); // 2.00 → 2
-          }
-        }
-        if (numValues.length >= 2) {
-          unitPrice = numValues[1];
-        }
-        if (numValues.length >= 3) {
-          lineTotal = numValues[numValues.length - 1]; // last numeric = total
-          if (numValues.length >= 3 && numValues.length <= 4) {
-            unitPrice = numValues[1]; // second = unit price
-          }
+        if (qtyHeaderX !== null && numSpans.length > 0) {
+          // Primary: use header column position — find numSpan closest to qty header
+          const qtySpan = numSpans.reduce((best, s) =>
+            Math.abs(s.x - qtyHeaderX) < Math.abs(best.x - qtyHeaderX) ? s : best
+          );
+          const qv = parseNum(qtySpan.text);
+          qty = (qv != null && qv > 0) ? Math.round(qv) : 1;
+          const others = numSpans.filter(s => s !== qtySpan).sort((a, b) => a.x - b.x);
+          if (others.length >= 1) unitPrice = parseNum(others[0].text);
+          if (others.length >= 2) lineTotal = parseNum(others[others.length - 1].text);
+        } else {
+          // Fallback: prefer integer-like values as qty — invoice quantities are whole numbers,
+          // while unit prices have cents (7.68, 22.99). Avoids rounding prices as quantities.
+          const qtyIdx = numValues.findIndex(v => v != null && v > 0 && v <= 9999 && Math.abs(v - Math.round(v)) < 0.05);
+          const usedIdx = qtyIdx >= 0 ? qtyIdx : 0;
+          if (numValues[usedIdx] != null) qty = Math.max(1, Math.round(numValues[usedIdx]));
+          const others = numValues.filter((_, i) => i !== usedIdx);
+          if (others.length >= 1) unitPrice = others[0];
+          if (others.length >= 2) lineTotal = others[others.length - 1];
         }
 
         // Skip rows where qty is 0 (often N/A or credit lines)

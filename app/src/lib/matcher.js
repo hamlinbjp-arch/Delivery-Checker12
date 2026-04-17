@@ -37,6 +37,17 @@ function buildPosSupplierCodeIndex(posItems) {
   return idx;
 }
 
+function buildPosSupplierCodeIndexRelaxed(posItems) {
+  // Map: strip ALL non-alphanumeric + leading zeros → posItem
+  // Handles mismatches like "SP-476" vs "SP476", "225 127" vs "225127", "WSL0476" vs "476"
+  const idx = new Map();
+  for (const p of (posItems || [])) {
+    const key = stripZeros((p.supplierCode || '').toLowerCase().replace(/[^a-z0-9]/g, ''));
+    if (key && key !== '0' && !idx.has(key)) idx.set(key, p);
+  }
+  return idx;
+}
+
 function buildPosCodeIndex(posItems) {
   // Map: posCode → posItem (for quick lookup after mapping match)
   const idx = new Map();
@@ -77,6 +88,7 @@ export function matchInvoiceItem(item, context) {
   // Use pre-built indexes if available (from matchAllItems), otherwise build on the fly
   const smIdx = context._indexes?.smIdx || buildSupplierMappingIndex(supplierMappings);
   const posScIdx = context._indexes?.posScIdx || buildPosSupplierCodeIndex(posItems);
+  const posScRelaxedIdx = context._indexes?.posScRelaxedIdx || buildPosSupplierCodeIndexRelaxed(posItems);
   const posCodeIdx = context._indexes?.posCodeIdx || buildPosCodeIndex(posItems);
 
   const result = {
@@ -195,6 +207,27 @@ export function matchInvoiceItem(item, context) {
     }
   }
 
+  // ── Level 4: relaxed supplier code (strip all non-alphanumeric + leading zeros) ──
+  // Catches mismatches like "SP-476" vs "SP476" or "225 127" vs "225127"
+  if (item.supplierCode) {
+    const relaxedCode = stripZeros(item.supplierCode.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    if (relaxedCode && relaxedCode !== '0') {
+      const found = posScRelaxedIdx.get(relaxedCode);
+      if (found) {
+        return {
+          ...result,
+          posCode: found.code,
+          posDescription: found.description,
+          posPrice: found.price ?? null,
+          matchLevel: 1,
+          matchSource: 'master',
+          matchConfidence: 90,
+          status: 'pending',
+        };
+      }
+    }
+  }
+
   return result;
 }
 
@@ -205,6 +238,7 @@ export function matchAllItems(items, context) {
   const _indexes = {
     smIdx: buildSupplierMappingIndex(context.supplierMappings),
     posScIdx: buildPosSupplierCodeIndex(context.posItems),
+    posScRelaxedIdx: buildPosSupplierCodeIndexRelaxed(context.posItems),
     posCodeIdx: buildPosCodeIndex(context.posItems),
   };
   const ctx = { ...context, _indexes };
