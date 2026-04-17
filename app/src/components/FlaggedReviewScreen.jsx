@@ -3,6 +3,48 @@ import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 import { searchPosItems } from '../lib/matcher';
 
+// Export all delivery items as CSV so the user can see what matched,
+// what didn't, and what the best fuzzy suggestion was for each item.
+function exportMatchingReport(items, supplierName) {
+  const headers = [
+    'Invoice Name', 'Supplier Code', 'Qty',
+    'Status', 'Match Level', 'Match Source', 'Confidence %',
+    'POS Suggestion', 'POS Code', 'POS Price',
+  ];
+  const esc = v => {
+    if (v == null) return '';
+    const s = String(v);
+    return (s.includes(',') || s.includes('"') || s.includes('\n'))
+      ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const sorted = [...items].sort((a, b) => {
+    if (a.status === 'unmatched' && b.status !== 'unmatched') return -1;
+    if (b.status === 'unmatched' && a.status !== 'unmatched') return 1;
+    return (a.matchLevel ?? 99) - (b.matchLevel ?? 99);
+  });
+  const rows = sorted.map(i => [
+    i.invoiceName || '',
+    i.supplierCode || '',
+    i.qtyExpected ?? '',
+    i.status || '',
+    i.matchLevel != null ? `L${i.matchLevel}` : 'None',
+    i.matchSource || '',
+    i.matchConfidence ?? '',
+    i.posDescription || '',
+    i.posCode || '',
+    i.posPrice != null ? i.posPrice.toFixed(2) : '',
+  ].map(esc).join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const date = new Date().toISOString().slice(0, 10);
+  a.download = `matching-${(supplierName || 'delivery').replace(/[^a-z0-9]/gi, '_')}-${date}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function MatchBadge({ item }) {
   if (item.status === 'unmatched' || !item.matchLevel) {
     return <span style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}>Unmatched</span>;
@@ -28,6 +70,17 @@ function ReviewItem({ item, posItems, supplier, addMatchCorrection, resolveItemW
 
   // Split state
   const [splits, setSplits] = useState([{ posCode: '', posDescription: '', qty: 1, query: '', results: [] }]);
+
+  const handleQuickConfirm = () => {
+    addMatchCorrection({
+      supplier,
+      invoiceName: item.invoiceName,
+      invoiceCode: item.supplierCode,
+      posCode: item.posCode,
+      posDescription: item.posDescription,
+    });
+    resolveItemWithPOS(item.id, { code: item.posCode, description: item.posDescription, price: item.posPrice });
+  };
 
   const handleLinkSearch = (q) => {
     setLinkQuery(q);
@@ -90,19 +143,29 @@ function ReviewItem({ item, posItems, supplier, addMatchCorrection, resolveItemW
 
       {/* Action buttons */}
       {mode === null && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" style={{ fontSize: 12, padding: '6px 12px' }}
-            onClick={() => setMode('link')}>
-            <Icon name="search" size={14} /> Link POS Item
-          </button>
-          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }}
-            onClick={() => markItemAsNewItem(item.id)}>
-            New Item
-          </button>
-          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }}
-            onClick={() => setMode('split')}>
-            Split
-          </button>
+        <div>
+          {item.matchLevel === 3 && item.posCode && (
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', fontSize: 13, padding: '9px 12px', marginBottom: 8, textAlign: 'left' }}
+              onClick={handleQuickConfirm}>
+              ✓ Confirm: {item.posDescription}
+            </button>
+          )}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" style={{ fontSize: 12, padding: '6px 12px' }}
+              onClick={() => setMode('link')}>
+              <Icon name="search" size={14} /> Link POS Item
+            </button>
+            <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }}
+              onClick={() => markItemAsNewItem(item.id)}>
+              New Item
+            </button>
+            <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }}
+              onClick={() => setMode('split')}>
+              Split
+            </button>
+          </div>
         </div>
       )}
 
@@ -237,8 +300,18 @@ export default function FlaggedReviewScreen() {
 
   return (
     <div style={{ paddingTop: 8 }}>
-      <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 12 }}>
-        Review Queue{yellowItems.length > 0 ? ` (${yellowItems.length})` : ''}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ fontSize: 17, fontWeight: 700 }}>
+          Review Queue{yellowItems.length > 0 ? ` (${yellowItems.length})` : ''}
+        </div>
+        {items.length > 0 && (
+          <button
+            className="btn btn-ghost"
+            style={{ fontSize: 11, padding: '4px 10px', color: 'var(--text3)' }}
+            onClick={() => exportMatchingReport(items, activeDelivery.supplier)}>
+            Export CSV
+          </button>
+        )}
       </div>
 
       {yellowItems.length === 0 ? (

@@ -9,10 +9,10 @@ const fmt = d => new Date(d).toLocaleDateString('en-AU', { day: '2-digit', month
 
 export default function Settings() {
   const {
-    apiKey, locationName, supplierMappings, posItems, departments, learningLayer,
+    apiKey, locationName, supplierMappings, posItems, departments, learningLayer, matchCorrections,
     supplierRecencyOrder, supplierUsageCounts,
     saveApiKey, saveLocationName, saveSupplierMappings, savePosItems, saveDepartments,
-    setLearningLayer, clearHistory,
+    setLearningLayer, setMatchCorrections, clearHistory,
   } = useStore();
 
   const [keyVal, setKeyVal] = useState(apiKey);
@@ -26,9 +26,11 @@ export default function Settings() {
   const [pendingAction, setPendingAction] = useState(null);
   const [errors, setErrors] = useState({});
 
-  const mappingsRef = useRef();
-  const stockRef = useRef();
-  const deptsRef = useRef();
+  const mappingsRef          = useRef();
+  const stockRef             = useRef();
+  const deptsRef             = useRef();
+  const correctionsImportRef = useRef();
+  const learningImportRef    = useRef();
 
   const setError = (key, msg) => setErrors(e => ({ ...e, [key]: msg }));
   const clearError = (key) => setErrors(e => ({ ...e, [key]: '' }));
@@ -112,8 +114,61 @@ export default function Settings() {
     }
   };
 
-  const mappingsUpdatedAt = supplierMappings?.[0]?.updatedAt;
-  const learningCount = Object.keys(learningLayer || {}).length;
+  // -- Export Match Corrections
+  const handleExportCorrections = () => {
+    const data = { exportedAt: new Date().toISOString(), matchCorrections };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `match-corrections-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // -- Import Match Corrections
+  const handleImportCorrections = async (file) => {
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const incoming = data.matchCorrections ?? data; // support both wrapped and raw
+      if (typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error('Invalid format');
+      await setMatchCorrections({ ...matchCorrections, ...incoming });
+      clearError('corrections');
+    } catch (err) {
+      setError('corrections', `Import failed: ${err.message}`);
+    }
+  };
+
+  // -- Export Learning Layer
+  const handleExportLearning = () => {
+    const data = { exportedAt: new Date().toISOString(), learningLayer };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `learning-layer-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // -- Import Learning Layer
+  const handleImportLearning = async (file) => {
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const incoming = data.learningLayer ?? data;
+      if (typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error('Invalid format');
+      await setLearningLayer({ ...learningLayer, ...incoming });
+      clearError('learning');
+    } catch (err) {
+      setError('learning', `Import failed: ${err.message}`);
+    }
+  };
+
+  const mappingsUpdatedAt  = supplierMappings?.[0]?.updatedAt;
+  const learningCount      = Object.keys(learningLayer || {}).length;
+  const correctionsCount   = Object.keys(matchCorrections || {}).length;
 
   return (
     <div style={{ paddingTop: 16 }}>
@@ -191,6 +246,11 @@ export default function Settings() {
           ) : (
             <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Not loaded</div>
           )}
+          {posItems?.length > 0 && !posItems.some(p => p.supplierCode) && (
+            <div style={{ fontSize: 12, color: 'var(--amber)', background: '#e5a10018', border: '1px solid var(--amber)', borderRadius: 6, padding: '8px 10px', marginBottom: 6 }}>
+              ⚠ Supplier codes missing — re-upload this file to enable supplier code matching.
+            </div>
+          )}
           <div style={{ marginBottom: 6 }}>
             <select className="input" style={{ fontSize: 12, padding: '6px 8px', appearance: 'auto' }}
               value={stockMode} onChange={e => setStockMode(e.target.value)}>
@@ -247,28 +307,77 @@ export default function Settings() {
         <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>
           <span style={{ color: 'var(--green)', fontWeight: 600 }}>{learningCount}</span> learned mapping{learningCount !== 1 ? 's' : ''}
         </div>
-        {learningCount > 0 && (
-          <>
+        <input ref={learningImportRef} type="file" accept=".json" style={{ display: 'none' }}
+          onChange={e => { if (e.target.files[0]) handleImportLearning(e.target.files[0]); e.target.value = ''; }} />
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: errors.learning ? 8 : 0 }}>
+          <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={handleExportLearning}
+            disabled={learningCount === 0}>
+            <Icon name="download" size={14} /> Export
+          </button>
+          <button className="btn btn-ghost" style={{ fontSize: 12 }}
+            onClick={() => learningImportRef.current?.click()}>
+            <Icon name="upload" size={14} /> Import
+          </button>
+          {learningCount > 0 && (
             <button className="btn btn-danger" style={{ fontSize: 12 }}
               onClick={() => setPendingAction(pendingAction === 'learning' ? null : 'learning')}>
-              Clear Learned Mappings
+              Clear
             </button>
-            {pendingAction === 'learning' && (
-              <div style={{ marginTop: 8, padding: '8px 10px', background: '#f4433612', border: '1px solid #f4433630', borderRadius: 6, fontSize: 12 }}>
-                <div style={{ marginBottom: 8, color: 'var(--red)' }}>Clear all {learningCount} learned mappings?</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn btn-danger" style={{ fontSize: 11, padding: '5px 12px' }}
-                    onClick={() => { setLearningLayer({}); setPendingAction(null); }}>Yes, clear</button>
-                  <button className="btn btn-ghost" style={{ fontSize: 11, padding: '5px 12px' }}
-                    onClick={() => setPendingAction(null)}>Cancel</button>
-                </div>
-              </div>
-            )}
-          </>
+          )}
+        </div>
+        {errors.learning && <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{errors.learning}</div>}
+        {pendingAction === 'learning' && (
+          <div style={{ marginTop: 8, padding: '8px 10px', background: '#f4433612', border: '1px solid #f4433630', borderRadius: 6, fontSize: 12 }}>
+            <div style={{ marginBottom: 8, color: 'var(--red)' }}>Clear all {learningCount} learned mappings?</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-danger" style={{ fontSize: 11, padding: '5px 12px' }}
+                onClick={() => { setLearningLayer({}); setPendingAction(null); }}>Yes, clear</button>
+              <button className="btn btn-ghost" style={{ fontSize: 11, padding: '5px 12px' }}
+                onClick={() => setPendingAction(null)}>Cancel</button>
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Section 3b: Supplier Data */}
+      {/* Section 3b: Match Corrections */}
+      <div className="card">
+        <div className="card-label">Match Corrections</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>
+          <span style={{ color: 'var(--green)', fontWeight: 600 }}>{correctionsCount}</span> correction{correctionsCount !== 1 ? 's' : ''}
+        </div>
+        <input ref={correctionsImportRef} type="file" accept=".json" style={{ display: 'none' }}
+          onChange={e => { if (e.target.files[0]) handleImportCorrections(e.target.files[0]); e.target.value = ''; }} />
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: errors.corrections ? 8 : 0 }}>
+          <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={handleExportCorrections}
+            disabled={correctionsCount === 0}>
+            <Icon name="download" size={14} /> Export
+          </button>
+          <button className="btn btn-ghost" style={{ fontSize: 12 }}
+            onClick={() => correctionsImportRef.current?.click()}>
+            <Icon name="upload" size={14} /> Import
+          </button>
+          {correctionsCount > 0 && (
+            <button className="btn btn-danger" style={{ fontSize: 12 }}
+              onClick={() => setPendingAction(pendingAction === 'corrections' ? null : 'corrections')}>
+              Clear
+            </button>
+          )}
+        </div>
+        {errors.corrections && <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{errors.corrections}</div>}
+        {pendingAction === 'corrections' && (
+          <div style={{ marginTop: 8, padding: '8px 10px', background: '#f4433612', border: '1px solid #f4433630', borderRadius: 6, fontSize: 12 }}>
+            <div style={{ marginBottom: 8, color: 'var(--red)' }}>Clear all {correctionsCount} corrections?</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-danger" style={{ fontSize: 11, padding: '5px 12px' }}
+                onClick={() => { setMatchCorrections({}); setPendingAction(null); }}>Yes, clear</button>
+              <button className="btn btn-ghost" style={{ fontSize: 11, padding: '5px 12px' }}
+                onClick={() => setPendingAction(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 3c: Supplier Data */}
       <div className="card">
         <div className="card-label">Supplier Data</div>
         <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>

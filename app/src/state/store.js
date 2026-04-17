@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { store as ls } from '../lib/storage';
+import { matchInvoiceItem } from '../lib/matcher';
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -83,6 +84,18 @@ export const useStore = create((set, get) => ({
   async savePosItems(items) {
     await ls.set('pos-items', items);
     set({ posItems: items });
+    // Re-match any unmatched items in the active delivery with the new posItems
+    const ad = get().activeDelivery;
+    if (ad?.items?.some(i => i.status === 'unmatched')) {
+      const { supplierMappings, learningLayer, matchCorrections } = get();
+      const rematchedItems = ad.items.map(item => {
+        if (item.status !== 'unmatched') return item;
+        return { ...item, ...matchInvoiceItem(item, { supplierMappings, posItems: items, learningLayer, matchCorrections, supplierName: ad.supplier }) };
+      });
+      const delivery = { ...ad, items: rematchedItems };
+      await ls.set('active-delivery', delivery);
+      set({ activeDelivery: delivery });
+    }
   },
 
   // ── Departments ──────────────────────────────────────────────────
@@ -177,6 +190,10 @@ export const useStore = create((set, get) => ({
   },
 
   // ── Match Corrections (supplier-scoped learned mappings) ─────────
+  async setMatchCorrections(corrections) {
+    await ls.set('match-corrections', corrections);
+    set({ matchCorrections: corrections });
+  },
   async addMatchCorrection({ supplier, invoiceName, invoiceCode, posCode, posDescription }) {
     if (!posCode) return;
     const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();

@@ -5,6 +5,27 @@ import { extractInvoiceItemsWithRetry } from '../lib/claude';
 import { matchAllItems } from '../lib/matcher';
 import { detectSupplierFromPDF } from '../lib/pdfParser';
 
+// Combine duplicate invoice lines (same supplier code or same name) by summing quantities.
+// Suppliers sometimes list the same item on two lines instead of setting qty 2.
+function deduplicateItems(items) {
+  const seen = new Map();
+  const result = [];
+  for (const item of items) {
+    const key = item.supplierCode
+      ? `code:${item.supplierCode.trim().toLowerCase()}`
+      : `name:${(item.invoiceName || '').trim().toLowerCase()}`;
+    if (seen.has(key)) {
+      seen.get(key).qtyExpected += (item.qtyExpected || 1);
+      seen.get(key).qtyReceived = seen.get(key).qtyExpected;
+    } else {
+      const copy = { ...item };
+      seen.set(key, copy);
+      result.push(copy);
+    }
+  }
+  return result;
+}
+
 export default function DeliveryForm() {
   const {
     apiKey, activeDelivery, supplierMappings, supplierRecencyOrder, supplierUsageCounts,
@@ -18,6 +39,8 @@ export default function DeliveryForm() {
   const [notes, setNotes] = useState(activeDelivery?.notes || '');
   const [customSupplier, setCustomSupplier] = useState('');
   const [invoiceFiles, setInvoiceFiles] = useState([]);
+  const [inputMode, setInputMode] = useState('upload'); // 'upload' | 'paste'
+  const [pasteText, setPasteText] = useState('');
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState('');
 
@@ -47,8 +70,10 @@ export default function DeliveryForm() {
     }
   };
 
+  const hasInput = inputMode === 'paste' ? pasteText.trim().length > 0 : invoiceFiles.length > 0;
+
   const handleProcess = async () => {
-    if (!invoiceFiles.length || !apiKey) return;
+    if (!hasInput || !apiKey) return;
     setError('');
 
     const effectiveSupplier = supplier === '__other__' ? customSupplier.trim() : supplier;
@@ -62,12 +87,14 @@ export default function DeliveryForm() {
     set({ processStep: 'extracting', extractionError: null });
 
     // Background extraction — fire and forget
-    const filesSnapshot = [...invoiceFiles];
-    extractInvoiceItemsWithRetry(apiKey, filesSnapshot, () => set({ processStep: 'extracting', extractionError: null, extractingRetry: true }))
+    const filesSnapshot = inputMode === 'paste' ? [] : [...invoiceFiles];
+    const pasteSnapshot = inputMode === 'paste' ? pasteText : '';
+    extractInvoiceItemsWithRetry(apiKey, filesSnapshot, () => set({ processStep: 'extracting', extractionError: null, extractingRetry: true }), pasteSnapshot)
       .then(extracted => {
         set({ processStep: 'matching', extractingRetry: false });
+        const deduped = deduplicateItems(extracted);
         const { supplierMappings: sm, posItems: pi, learningLayer: ll, matchCorrections: mc } = useStore.getState();
-        const matched = matchAllItems(extracted, {
+        const matched = matchAllItems(deduped, {
           supplierMappings: sm, posItems: pi, learningLayer: ll,
           matchCorrections: mc, supplierName: effectiveSupplier,
         });
@@ -118,25 +145,62 @@ export default function DeliveryForm() {
 
       {/* Invoice upload */}
       <div className="card">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           <Icon name="file" size={16} />
           <span style={{ fontSize: 13, fontWeight: 600 }}>Delivery Invoice</span>
         </div>
-        <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px' }}>PDF invoice or photo of the delivery docket</p>
-        <input ref={pdfRef} type="file" accept="application/pdf,image/*" multiple style={{ display: 'none' }}
-          onChange={e => { handleInvoiceFiles(e.target.files); pdfRef.current.value = ''; }} />
-        <input ref={imgRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-          onChange={e => { handleInvoiceFiles(e.target.files); imgRef.current.value = ''; }} />
-        <div className="upload-zone">
-          <button className="upload-add" onClick={() => pdfRef.current?.click()}>📄 Upload</button>
-          <button className="upload-add" onClick={() => imgRef.current?.click()}>📷 Camera</button>
-          {invoiceFiles.map((f, i) => (
-            <div key={i} className="upload-file">
-              <span>{f.name}</span>
-              <button onClick={() => setInvoiceFiles(prev => prev.filter((_, j) => j !== i))}><Icon name="x" size={12} /></button>
-            </div>
-          ))}
+
+        {/* Mode tabs */}
+        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
+          <button
+            className={`btn${inputMode === 'upload' ? ' btn-primary' : ' btn-ghost'}`}
+            style={{ flex: 1, borderRadius: 0, fontSize: 12, padding: '7px 0' }}
+            onClick={() => setInputMode('upload')}>
+            📄 Upload File
+          </button>
+          <button
+            className={`btn${inputMode === 'paste' ? ' btn-primary' : ' btn-ghost'}`}
+            style={{ flex: 1, borderRadius: 0, fontSize: 12, padding: '7px 0', borderLeft: '1px solid var(--border)' }}
+            onClick={() => setInputMode('paste')}>
+            📋 Paste Text
+          </button>
         </div>
+
+        {inputMode === 'upload' ? (
+          <>
+            <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px' }}>PDF, TXT export, or photo of the delivery docket</p>
+            <input ref={pdfRef} type="file" accept="application/pdf,text/plain,image/*" multiple style={{ display: 'none' }}
+              onChange={e => { handleInvoiceFiles(e.target.files); pdfRef.current.value = ''; }} />
+            <input ref={imgRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+              onChange={e => { handleInvoiceFiles(e.target.files); imgRef.current.value = ''; }} />
+            <div className="upload-zone">
+              <button className="upload-add" onClick={() => pdfRef.current?.click()}>📄 Upload</button>
+              <button className="upload-add" onClick={() => imgRef.current?.click()}>📷 Camera</button>
+              {invoiceFiles.map((f, i) => (
+                <div key={i} className="upload-file">
+                  <span>{f.name}</span>
+                  <button onClick={() => setInvoiceFiles(prev => prev.filter((_, j) => j !== i))}><Icon name="x" size={12} /></button>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 8px' }}>Paste invoice text directly — supports any text format</p>
+            <textarea
+              className="input"
+              rows={8}
+              placeholder={'Paste invoice text here...\n\nYou can paste multiple invoices — just paste all the text together.'}
+              value={pasteText}
+              onChange={e => setPasteText(e.target.value)}
+              style={{ fontSize: 13, fontFamily: 'var(--font-mono)', resize: 'vertical', lineHeight: 1.5 }}
+            />
+            {pasteText.trim() && (
+              <button className="btn btn-ghost" style={{ fontSize: 11, marginTop: 6 }}
+                onClick={() => setPasteText('')}>Clear</button>
+            )}
+          </>
+        )}
       </div>
 
       {/* Notes */}
@@ -150,9 +214,9 @@ export default function DeliveryForm() {
 
       {/* Process button */}
       <button
-        className={`btn${invoiceFiles.length && apiKey ? ' btn-primary' : ''}`}
-        style={{ width: '100%', padding: 16, fontSize: 16, fontWeight: 700, border: `2px solid ${invoiceFiles.length ? 'var(--green-dark)' : 'var(--border)'}` }}
-        disabled={!invoiceFiles.length || !apiKey}
+        className={`btn${hasInput && apiKey ? ' btn-primary' : ''}`}
+        style={{ width: '100%', padding: 16, fontSize: 16, fontWeight: 700, border: `2px solid ${hasInput ? 'var(--green-dark)' : 'var(--border)'}` }}
+        disabled={!hasInput || !apiKey}
         onClick={handleProcess}>
         <Icon name="zap" size={20} /> Check Delivery
       </button>
