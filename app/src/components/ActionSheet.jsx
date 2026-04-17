@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
-import BarcodeScanner from './BarcodeScanner';
-import { searchPosItems, findByBarcode } from '../lib/matcher';
+import { searchPosItems } from '../lib/matcher';
 
 export default function ActionSheet({ item, onAction, onClose }) {
   const { posItems } = useStore();
-  const [mode, setMode] = useState('main'); // 'main' | 'short' | 'damaged' | 'swap' | 'swap-search' | 'scan'
+  const [mode, setMode] = useState('main'); // 'main' | 'short' | 'damaged' | 'swap-search'
   const [qtyReceived, setQtyReceived] = useState(item.qtyReceived ?? item.qtyExpected);
   const [damageNote, setDamageNote] = useState(item.damageNote || '');
   const [swapQuery, setSwapQuery] = useState('');
@@ -16,17 +15,6 @@ export default function ActionSheet({ item, onAction, onClose }) {
   const handleSwapSearch = (q) => {
     setSwapQuery(q);
     setSwapResults(q.length >= 2 ? searchPosItems(q, posItems) : []);
-  };
-
-  const handleBarcodeResult = (barcode) => {
-    const found = findByBarcode(barcode, posItems);
-    if (found) {
-      onAction(item.id, { status: 'swapped', swappedForCode: found.code, swappedForDescription: found.description });
-    } else {
-      setMode('swap-search');
-      setSwapQuery(barcode);
-      setSwapResults(searchPosItems(barcode, posItems));
-    }
   };
 
   return (
@@ -64,7 +52,7 @@ export default function ActionSheet({ item, onAction, onClose }) {
               Set Aside
             </button>
             <button className="btn" style={{ background: '#1d4ed8', color: '#fff', padding: 14 }}
-              onClick={() => setMode('swap')}>
+              onClick={() => setMode('swap-search')}>
               Swapped
             </button>
             <button className="btn" style={{ background: 'transparent', border: '2px solid var(--red)', color: 'var(--red)', padding: 14 }}
@@ -110,24 +98,10 @@ export default function ActionSheet({ item, onAction, onClose }) {
           </div>
         )}
 
-        {mode === 'swap' && (
-          <div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 10 }}>What was delivered instead?</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setMode('scan')}>
-                <Icon name="camera" size={16} /> Scan Barcode
-              </button>
-              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setMode('swap-search')}>
-                Search
-              </button>
-            </div>
-            <button className="btn btn-ghost" style={{ width: '100%' }} onClick={() => setMode('main')}>Back</button>
-          </div>
-        )}
-
         {mode === 'swap-search' && (
           <div>
-            <input className="input" placeholder="Search POS items..." value={swapQuery}
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 8 }}>What was delivered instead?</div>
+            <input className="input" placeholder="Search stock list..." value={swapQuery}
               onChange={e => handleSwapSearch(e.target.value)} autoFocus style={{ marginBottom: 8 }} />
             <div style={{ maxHeight: 200, overflowY: 'auto' }}>
               {swapResults.map(r => (
@@ -139,14 +113,10 @@ export default function ActionSheet({ item, onAction, onClose }) {
                 </button>
               ))}
             </div>
-            <button className="btn btn-ghost" style={{ width: '100%', marginTop: 8 }} onClick={() => setMode('swap')}>Back</button>
+            <button className="btn btn-ghost" style={{ width: '100%', marginTop: 8 }} onClick={() => setMode('main')}>Back</button>
           </div>
         )}
       </div>
-
-      {mode === 'scan' && (
-        <BarcodeScanner onResult={handleBarcodeResult} onClose={() => setMode('swap')} />
-      )}
     </>
   );
 }

@@ -1,80 +1,94 @@
 import { useRef, useState } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
-import { extractInvoiceItemsWithRetry } from '../lib/claude';
+import { extractInvoiceItemsLocally } from '../lib/pdfParser';
 import { matchAllItems } from '../lib/matcher';
-import { detectSupplierFromPDF } from '../lib/pdfParser';
+
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+function deduplicateItems(items) {
+  const seen = new Map();
+  const result = [];
+  for (const item of items) {
+    const key = item.supplierCode
+      ? `code:${item.supplierCode.trim().toLowerCase()}`
+      : `name:${(item.invoiceName || '').trim().toLowerCase()}`;
+    if (seen.has(key)) {
+      seen.get(key).qtyExpected += (item.qtyExpected || 1);
+      seen.get(key).qtyReceived = seen.get(key).qtyExpected;
+    } else {
+      const copy = { ...item };
+      seen.set(key, copy);
+      result.push(copy);
+    }
+  }
+  return result;
+}
 
 export default function DeliveryForm() {
   const {
-    apiKey, activeDelivery, supplierMappings, supplierRecencyOrder, supplierUsageCounts,
+    activeDelivery, supplierRecencyOrder, supplierUsageCounts, history,
     startDelivery, updateDeliveryStep, setDeliveryItems, setDeliveryNotes,
-    set,
   } = useStore();
 
-  // Local form state
   const [supplier, setSupplier] = useState(activeDelivery?.supplier || '');
-  const [date, setDate] = useState(activeDelivery?.date ? activeDelivery.date.slice(0, 10) : new Date().toISOString().slice(0, 10));
-  const [notes, setNotes] = useState(activeDelivery?.notes || '');
   const [customSupplier, setCustomSupplier] = useState('');
-  const [invoiceFiles, setInvoiceFiles] = useState([]);
-  const [detecting, setDetecting] = useState(false);
+  const [date, setDate] = useState(
+    activeDelivery?.date ? activeDelivery.date.slice(0, 10) : new Date().toISOString().slice(0, 10)
+  );
+  const [notes, setNotes] = useState(activeDelivery?.notes || '');
+  const [invoiceFile, setInvoiceFile] = useState(null);
+  const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
 
-  const pdfRef = useRef();
-  const imgRef = useRef();
+  const fileRef = useRef();
 
-  // Supplier list: recency-ordered first, then remaining alphabetically
-  const allSuppliers = [...new Set((supplierMappings || []).map(m => m.supplier).filter(Boolean))];
-  const recencyOrder = supplierRecencyOrder || [];
+  const historySuppliers = [...new Set((history || []).map(h => h.supplier).filter(Boolean))];
   const uniqueSuppliers = [
-    ...recencyOrder.filter(s => allSuppliers.includes(s)),
-    ...allSuppliers.filter(s => !recencyOrder.includes(s)).sort(),
+    ...supplierRecencyOrder.filter(s => historySuppliers.includes(s)),
+    ...historySuppliers.filter(s => !supplierRecencyOrder.includes(s)),
   ];
 
-  const handleInvoiceFiles = async (files) => {
-    const arr = Array.from(files);
-    setInvoiceFiles(prev => [...prev, ...arr]);
-    // Auto-detect supplier from PDF if not set
-    if (!supplier && uniqueSuppliers.length) {
-      const pdfFile = arr.find(f => f.type.includes('pdf') || f.name.toLowerCase().endsWith('.pdf'));
-      if (pdfFile) {
-        setDetecting(true);
-        const detected = await detectSupplierFromPDF(pdfFile, uniqueSuppliers);
-        setDetecting(false);
-        if (detected) setSupplier(detected);
-      }
-    }
-  };
+  const effectiveSupplier = supplier === '__other__' ? customSupplier.trim() : supplier;
 
   const handleProcess = async () => {
-    if (!invoiceFiles.length || !apiKey) return;
+    if (!invoiceFile || processing) return;
     setError('');
+    setProcessing(true);
+    try {
+      const extracted = await extractInvoiceItemsLocally(invoiceFile);
+      if (!extracted || extracted.length === 0) {
+        throw new Error('No line items found. The PDF may be image-based or in an unsupported format.');
+      }
 
-    const effectiveSupplier = supplier === '__other__' ? customSupplier.trim() : supplier;
+      const withIds = extracted.map(item => ({
+        ...item,
+        id: uid(),
+        qtyReceived: item.qtyExpected,
+        status: 'pending',
+        damageNote: '',
+        swappedForCode: null,
+        isBonus: false,
+      }));
 
-    // Initialize delivery record
-    await startDelivery(effectiveSupplier);
-    if (notes) await setDeliveryNotes(notes);
+      const deduped = deduplicateItems(withIds);
+      const { posItems, learnedMappings, matchCorrections } = useStore.getState();
 
-    // Navigate to dashboard immediately — don't wait for extraction
-    await updateDeliveryStep('dashboard');
-    set({ processStep: 'extracting', extractionError: null });
+      const matched = matchAllItems(deduped, {
+        posItems, learnedMappings, matchCorrections, supplierName: effectiveSupplier,
+      });
 
-    // Background extraction — fire and forget
-    const filesSnapshot = [...invoiceFiles];
-    extractInvoiceItemsWithRetry(apiKey, filesSnapshot, () => set({ processStep: 'extracting', extractionError: null, extractingRetry: true }))
-      .then(extracted => {
-        set({ processStep: 'matching', extractingRetry: false });
-        const { supplierMappings: sm, posItems: pi, learningLayer: ll, matchCorrections: mc } = useStore.getState();
-        const matched = matchAllItems(extracted, {
-          supplierMappings: sm, posItems: pi, learningLayer: ll,
-          matchCorrections: mc, supplierName: effectiveSupplier,
-        });
-        return setDeliveryItems(matched);
-      })
-      .then(() => set({ processStep: 'idle' }))
-      .catch(err => set({ processStep: 'idle', extractingRetry: false, extractionError: err.message }));
+      await startDelivery(effectiveSupplier);
+      if (notes) await setDeliveryNotes(notes);
+      await setDeliveryItems(matched);
+
+      const hasReview = matched.some(i => i.status === 'review');
+      await updateDeliveryStep(hasReview ? 'review' : 'checklist');
+    } catch (err) {
+      setError(err.message || 'Failed to process invoice.');
+    } finally {
+      setProcessing(false);
+    }
   };
 
   return (
@@ -85,9 +99,7 @@ export default function DeliveryForm() {
 
       {/* Supplier */}
       <div style={{ marginBottom: 14 }}>
-        <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>
-          Supplier {detecting && <span style={{ color: 'var(--amber)', fontWeight: 400 }}>· scanning PDF...</span>}
-        </label>
+        <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>Supplier</label>
         {uniqueSuppliers.length ? (
           <select className="input" style={{ appearance: 'auto' }} value={supplier}
             onChange={e => setSupplier(e.target.value)}>
@@ -117,26 +129,26 @@ export default function DeliveryForm() {
       </div>
 
       {/* Invoice upload */}
-      <div className="card">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           <Icon name="file" size={16} />
           <span style={{ fontSize: 13, fontWeight: 600 }}>Delivery Invoice</span>
         </div>
-        <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px' }}>PDF invoice or photo of the delivery docket</p>
-        <input ref={pdfRef} type="file" accept="application/pdf,image/*" multiple style={{ display: 'none' }}
-          onChange={e => { handleInvoiceFiles(e.target.files); pdfRef.current.value = ''; }} />
-        <input ref={imgRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-          onChange={e => { handleInvoiceFiles(e.target.files); imgRef.current.value = ''; }} />
-        <div className="upload-zone">
-          <button className="upload-add" onClick={() => pdfRef.current?.click()}>📄 Upload</button>
-          <button className="upload-add" onClick={() => imgRef.current?.click()}>📷 Camera</button>
-          {invoiceFiles.map((f, i) => (
-            <div key={i} className="upload-file">
-              <span>{f.name}</span>
-              <button onClick={() => setInvoiceFiles(prev => prev.filter((_, j) => j !== i))}><Icon name="x" size={12} /></button>
-            </div>
-          ))}
-        </div>
+        <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px' }}>Upload the supplier invoice PDF</p>
+        <input ref={fileRef} type="file" accept="application/pdf" style={{ display: 'none' }}
+          onChange={e => { setInvoiceFile(e.target.files[0] || null); fileRef.current.value = ''; }} />
+        {invoiceFile ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'var(--bg3)', borderRadius: 6 }}>
+            <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{invoiceFile.name}</span>
+            <button onClick={() => setInvoiceFile(null)}
+              style={{ background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer', fontSize: 16 }}>✕</button>
+          </div>
+        ) : (
+          <button className="btn btn-ghost" style={{ width: '100%', padding: 12 }}
+            onClick={() => fileRef.current?.click()}>
+            <Icon name="upload" size={16} /> Choose PDF
+          </button>
+        )}
       </div>
 
       {/* Notes */}
@@ -146,17 +158,22 @@ export default function DeliveryForm() {
           value={notes} onChange={e => setNotes(e.target.value)} />
       </div>
 
-      {error && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 12, padding: '8px 10px', background: '#f4433612', borderRadius: 6 }}>{error}</div>}
+      {error && (
+        <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 12, padding: '8px 10px', background: '#f4433612', borderRadius: 6 }}>
+          {error}
+        </div>
+      )}
 
-      {/* Process button */}
       <button
-        className={`btn${invoiceFiles.length && apiKey ? ' btn-primary' : ''}`}
-        style={{ width: '100%', padding: 16, fontSize: 16, fontWeight: 700, border: `2px solid ${invoiceFiles.length ? 'var(--green-dark)' : 'var(--border)'}` }}
-        disabled={!invoiceFiles.length || !apiKey}
+        className={`btn${invoiceFile && !processing ? ' btn-primary' : ''}`}
+        style={{ width: '100%', padding: 16, fontSize: 16, fontWeight: 700,
+          border: `2px solid ${invoiceFile ? 'var(--green-dark)' : 'var(--border)'}` }}
+        disabled={!invoiceFile || processing}
         onClick={handleProcess}>
-        <Icon name="zap" size={20} /> Check Delivery
+        {processing
+          ? <><span className="spinner">⟳</span> Processing PDF...</>
+          : <><Icon name="zap" size={20} /> Check Delivery</>}
       </button>
-      {!apiKey && <p style={{ fontSize: 12, color: 'var(--amber)', marginTop: 8, textAlign: 'center' }}>Set your API key in Settings first</p>}
     </div>
   );
 }
