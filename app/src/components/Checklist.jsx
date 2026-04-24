@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import Icon from '../lib/icons';
 import { useStore } from '../state/store';
 import { searchPosItems } from '../lib/matcher';
@@ -27,18 +27,92 @@ function InlinePosSearch({ itemId, onSearch, results, onSelect }) {
   );
 }
 
+function InlineSplitBuilder({ posItems, onConfirm }) {
+  const [entries, setEntries] = useState([]);
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState([]);
+
+  const handleSearch = (query) => {
+    setQ(query);
+    setResults(query.trim() ? searchPosItems(query, posItems) : []);
+  };
+
+  const addEntry = (posItem) => {
+    setEntries(e => [...e, { posItem, qty: 1 }]);
+    setQ('');
+    setResults([]);
+  };
+
+  const removeEntry = (idx) => setEntries(e => e.filter((_, i) => i !== idx));
+
+  const updateQty = (idx, delta) =>
+    setEntries(e => e.map((en, i) => i === idx ? { ...en, qty: Math.max(1, en.qty + delta) } : en));
+
+  const handleConfirm = () => {
+    if (!entries.length) return;
+    onConfirm(entries.map(e => ({
+      qty: e.qty,
+      posCode: e.posItem.code,
+      posDescription: e.posItem.description,
+      posPrice: e.posItem.price || null,
+    })));
+  };
+
+  return (
+    <div style={{ padding: '0 12px 10px' }}>
+      <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>
+        Add POS items that make up this delivery line:
+      </div>
+      {entries.map((e, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, padding: '6px 8px', background: 'var(--bg3)', borderRadius: 6 }}>
+          <div style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {e.posItem.description}
+          </div>
+          <button onClick={() => updateQty(i, -1)}
+            style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', color: 'var(--text1)', fontSize: 16 }}>−</button>
+          <span style={{ minWidth: 24, textAlign: 'center', fontWeight: 700, fontSize: 14 }}>{e.qty}</span>
+          <button onClick={() => updateQty(i, 1)}
+            style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', color: 'var(--text1)', fontSize: 16 }}>+</button>
+          <button onClick={() => removeEntry(i)}
+            style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 16, padding: '2px 4px' }}>✕</button>
+        </div>
+      ))}
+      <input className="input" placeholder="Search to add POS item..." value={q}
+        onChange={e => handleSearch(e.target.value)} style={{ fontSize: 16, marginBottom: 6 }} autoFocus={entries.length === 0} />
+      {results.map(p => (
+        <div key={p.code} onClick={() => addEntry(p)}
+          style={{ padding: '8px 4px', borderBottom: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13 }}>{p.description}</span>
+          {p.price > 0 && <span style={{ fontSize: 12, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>${p.price.toFixed(2)}</span>}
+        </div>
+      ))}
+      {q.length > 1 && results.length === 0 && (
+        <div style={{ fontSize: 12, color: 'var(--text3)', padding: '8px 0' }}>No matches found</div>
+      )}
+      {entries.length > 0 && (
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: 8, fontSize: 13 }} onClick={handleConfirm}>
+          Confirm Split ({entries.length} item{entries.length !== 1 ? 's' : ''})
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function Checklist() {
-  const { activeDelivery, posItems, updateDeliveryItem, updateDeliveryStep } = useStore(s => ({
+  const { activeDelivery, posItems, updateDeliveryItem, updateDeliveryStep, markItemAsNewItem, addSplitToItem } = useStore(s => ({
     activeDelivery: s.activeDelivery,
     posItems: s.posItems,
     updateDeliveryItem: s.updateDeliveryItem,
     updateDeliveryStep: s.updateDeliveryStep,
+    markItemAsNewItem: s.markItemAsNewItem,
+    addSplitToItem: s.addSplitToItem,
   }));
 
   const items = activeDelivery?.items || [];
   const [searchQuery, setSearchQuery] = useState('');
   const [actionItem, setActionItem] = useState(null);
   const [openSearchId, setOpenSearchId] = useState(null);
+  const [openSplitId, setOpenSplitId] = useState(null);
   const [searchResults, setSearchResults] = useState([]);
 
   const counts = useMemo(() => ({
@@ -87,8 +161,15 @@ export default function Checklist() {
     haptic(30);
   }, [updateDeliveryItem]);
 
-  const handleOpenSearch = (itemId) => {
-    setOpenSearchId(openSearchId === itemId ? null : itemId);
+  const toggleSearch = (id) => {
+    setOpenSearchId(p => p === id ? null : id);
+    setOpenSplitId(null);
+    setSearchResults([]);
+  };
+
+  const toggleSplit = (id) => {
+    setOpenSplitId(p => p === id ? null : id);
+    setOpenSearchId(null);
     setSearchResults([]);
   };
 
@@ -114,6 +195,12 @@ export default function Checklist() {
       posCode: posItem.code,
     });
     setOpenSearchId(null);
+    haptic(30);
+  };
+
+  const handleSplit = (deliveryItemId, splits) => {
+    addSplitToItem(deliveryItemId, splits);
+    setOpenSplitId(null);
     haptic(30);
   };
 
@@ -159,15 +246,24 @@ export default function Checklist() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, padding: '0 12px 10px', flexWrap: 'wrap' }}>
-            <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => handleOpenSearch(item.id)}>
-              🔍 Find in Stock List
+            <button className={`btn btn-ghost${openSearchId === item.id ? ' active' : ''}`} style={{ fontSize: 12 }}
+              onClick={() => toggleSearch(item.id)}>
+              🔍 Search
             </button>
-            <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setActionItem(item)}>
-              ⋯ More
+            <button className={`btn btn-ghost${openSplitId === item.id ? ' active' : ''}`} style={{ fontSize: 12 }}
+              onClick={() => toggleSplit(item.id)}>
+              ⊕ Split
+            </button>
+            <button className="btn btn-ghost" style={{ fontSize: 12 }}
+              onClick={() => { markItemAsNewItem(item.id); haptic(30); }}>
+              🆕 New Item
             </button>
           </div>
           {openSearchId === item.id && (
             <InlinePosSearch itemId={item.id} onSearch={handlePosSearch} results={searchResults} onSelect={handleSelectPosItem} />
+          )}
+          {openSplitId === item.id && (
+            <InlineSplitBuilder posItems={posItems || []} onConfirm={(splits) => handleSplit(item.id, splits)} />
           )}
         </div>
       ))}
@@ -192,7 +288,6 @@ export default function Checklist() {
                 }}>
                   {item.matchSource === 'code' ? 'CODE' :
                    item.matchSource === 'learned' ? 'LEARNED' :
-                   item.matchSource === 'correction' ? 'CORRECTION' :
                    item.matchSource === 'fuzzy' ? `FUZZY ${item.matchConfidence}%` : 'MATCHED'}
                 </span>
               </div>

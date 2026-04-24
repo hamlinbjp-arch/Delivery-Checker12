@@ -1,12 +1,5 @@
 import { fuzzyScore, normalize } from './fuzzy';
 
-const correctionKey = (supplier, invoiceCode, invoiceName) => {
-  const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-  return invoiceCode
-    ? `${norm(supplier)}|code:${norm(invoiceCode)}`
-    : `${norm(supplier)}|name:${norm(invoiceName)}`;
-};
-
 function buildPosCodeIndex(posItems) {
   const idx = new Map();
   for (const p of (posItems || [])) {
@@ -38,15 +31,21 @@ function hit(pos, matchLevel, matchSource, matchConfidence, status) {
 }
 
 // Match a single invoice item against the POS catalog.
-// context: { posItems, learnedMappings, matchCorrections, supplierName, _posIdx }
+// context: { posItems, learnedMappings, supplierName, _posIdx }
 export function matchInvoiceItem(item, context) {
-  const { posItems, learnedMappings, matchCorrections, supplierName } = context;
+  const { posItems, learnedMappings } = context;
 
   if ((item.qtyExpected ?? 1) === 0) return { ...EMPTY, status: 'na' };
 
   const posIdx = context._posIdx || buildPosCodeIndex(posItems);
 
-  // 1. Learned mappings by supplier code
+  // 1. Exact supplier code match (invoice supplierCode vs Stockcodes.txt code)
+  if (item.supplierCode) {
+    const pos = posIdx.get(item.supplierCode.trim().toLowerCase());
+    if (pos) return hit(pos, 1, 'code', 100, 'pending');
+  }
+
+  // 2. Learned mappings by supplier code
   if (item.supplierCode && learnedMappings) {
     const posCode = learnedMappings[item.supplierCode.trim().toLowerCase()];
     if (posCode) {
@@ -55,7 +54,7 @@ export function matchInvoiceItem(item, context) {
     }
   }
 
-  // 2. Learned mappings by normalized invoice name
+  // 3. Learned mappings by normalized invoice name
   if (item.invoiceName && learnedMappings) {
     const posCode = learnedMappings[normalize(item.invoiceName)];
     if (posCode) {
@@ -64,23 +63,7 @@ export function matchInvoiceItem(item, context) {
     }
   }
 
-  // 3. Exact supplier code match (invoice supplierCode vs Stockcodes.txt code)
-  if (item.supplierCode) {
-    const pos = posIdx.get(item.supplierCode.trim().toLowerCase());
-    if (pos) return hit(pos, 1, 'code', 100, 'pending');
-  }
-
-  // 4. Match corrections (supplier-scoped manual overrides)
-  if (matchCorrections && (item.supplierCode || item.invoiceName)) {
-    const key = correctionKey(supplierName, item.supplierCode, item.invoiceName);
-    const corr = matchCorrections[key];
-    if (corr) {
-      const pos = posIdx.get((corr.posCode || '').toLowerCase()) || null;
-      if (pos) return hit(pos, 1, 'correction', 99, 'pending');
-    }
-  }
-
-  // 5. Fuzzy name match: ≥85 auto-accept, 50–84 surface for review
+  // 4. Fuzzy name match: ≥85 auto-accept, 50–84 surface for review
   if (item.invoiceName && posItems?.length) {
     let best = { pos: null, score: 0 };
     for (const p of posItems) {

@@ -25,7 +25,6 @@ export const useStore = create((set, get) => ({
   locationName: '',
   posItems: [],
   learnedMappings: {},    // { supplierCode | normName: posCode }
-  matchCorrections: {},   // { 'SUP|code:X' | 'SUP|name:Y': { posCode, posDescription } }
   activeDelivery: null,
   history: [],
 
@@ -67,22 +66,6 @@ export const useStore = create((set, get) => ({
     else if (invoiceName) lm[normalize(invoiceName)] = posCode;
     await ls.set('learned-mappings', lm);
     set({ learnedMappings: lm });
-  },
-
-  // ── Match Corrections (supplier-scoped manual overrides) ─────────
-  async setMatchCorrections(corrections) {
-    await ls.set('match-corrections', corrections);
-    set({ matchCorrections: corrections });
-  },
-  async addMatchCorrection({ supplier, invoiceName, invoiceCode, posCode, posDescription }) {
-    if (!posCode) return;
-    const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-    const key = invoiceCode
-      ? `${norm(supplier)}|code:${norm(invoiceCode)}`
-      : `${norm(supplier)}|name:${norm(invoiceName)}`;
-    const corrections = { ...get().matchCorrections, [key]: { supplier, invoiceName, invoiceCode: invoiceCode || null, posCode, posDescription } };
-    await ls.set('match-corrections', corrections);
-    set({ matchCorrections: corrections });
   },
 
   // ── Active Delivery ──────────────────────────────────────────────
@@ -230,11 +213,10 @@ if (typeof window !== 'undefined') {
 }
 
 export async function initStore() {
-  const [locationName, posItems, learnedMappings, matchCorrections, activeDelivery, history] = await Promise.all([
+  const [locationName, posItems, learnedMappings, activeDelivery, history] = await Promise.all([
     ls.get('location-name'),
     ls.get('pos-items'),
     ls.get('learned-mappings'),
-    ls.get('match-corrections'),
     ls.get('active-delivery'),
     ls.get('history'),
   ]);
@@ -243,7 +225,6 @@ export async function initStore() {
     locationName: locationName || '',
     posItems: posItems || [],
     learnedMappings: learnedMappings || {},
-    matchCorrections: matchCorrections || {},
     activeDelivery: activeDelivery || null,
     history: history || [],
   });

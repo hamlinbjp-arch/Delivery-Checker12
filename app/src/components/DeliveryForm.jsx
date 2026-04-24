@@ -72,10 +72,10 @@ export default function DeliveryForm() {
       }));
 
       const deduped = deduplicateItems(withIds);
-      const { posItems, learnedMappings, matchCorrections } = useStore.getState();
+      const { posItems, learnedMappings } = useStore.getState();
 
       const matched = matchAllItems(deduped, {
-        posItems, learnedMappings, matchCorrections, supplierName: effectiveSupplier,
+        posItems, learnedMappings, supplierName: effectiveSupplier,
       });
 
       await startDelivery(effectiveSupplier);
